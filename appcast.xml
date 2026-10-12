@@ -3,6 +3,27 @@
     <channel>
         <title>Chowser</title>
         <item>
+            <title>3.9.13</title>
+            <pubDate>Mon, 12 Oct 2026 12:48:08 +0000</pubDate>
+            <link>https://github.com/bsreeram08/chowser/releases/tag/v3.9.13</link>
+            <sparkle:phasedRolloutInterval>86400</sparkle:phasedRolloutInterval>
+            <sparkle:version>202610121810</sparkle:version>
+            <sparkle:shortVersionString>3.9.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[
+### Changed
+- **Settings is reorganised.** The sidebar is now Browsers, Rules, Rewrites, Native Apps, Picker, Privacy, General, and Backup & Advanced.
+- **Rewrites work like Rules.** Drag to reorder, edit in a side panel, undo deletes, and test a link from the toolbar. Catalog rewrites stay read-only; duplicate one to make an editable copy.
+- **Native Apps** shows one Allow switch per app, with the technical details behind info buttons.
+- **Privacy** has a single "Look up link details online" switch, plus short-link services, the timeout, and tracking cleanup.
+- **General** leads with whether Chowser is your default browser. "App mode" is now "Show in Dock".
+- **Backup & Advanced** collects Export All / Import, importing from the App Store version, the developer API, Set Up with AI, diagnostics, and reset.
+- The Appearance page is now called Picker; nothing on it changed.
+
+]]></description>
+            <enclosure url="https://github.com/bsreeram08/chowser/releases/download/v3.9.13/Chowser-3.9.13.dmg" length="4554281" type="application/octet-stream" sparkle:edSignature="0iKVySDKCYBBOutLAYFeAE/4MYopRzOxrMkA4M8HVlxhsDNtxsaIvd2wKkcv0kSKoHV+RyERbgBv9MMdyoqJCg=="/>
+        </item>
+        <item>
             <title>3.9.12</title>
             <pubDate>Mon, 12 Oct 2026 12:07:17 +0000</pubDate>
             <link>https://github.com/bsreeram08/chowser/releases/tag/v3.9.12</link>
@@ -101,6 +122,6 @@
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: S3bttyBOuF6a5NXEKFaa16JuVckXuzkdLsgLN1iwhqj1ptrBEBxdY99zEo9/5o05k+a5Q7odlE9yJFbcZmHdDQ==
-length: 7829
+edSignature: 0QxxJyMbcMM2uloozejFbzAtobbV9hXxp3qabdupvykwbexqT8y9fli+MafRh9lyK+vta7qVao8aJLgkUKIBAQ==
+length: 9575
 -->
