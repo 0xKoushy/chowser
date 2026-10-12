@@ -361,7 +361,7 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     }
 
     /// Whether the one-time "shortlink resolution is now off by default" notice has been
-    /// shown, on either surface (picker banner or Settings > Behavior). Shared flag so it
+    /// shown, on either surface (picker banner or Settings ▸ Privacy). Shared flag so it
     /// only shows once total, whichever surface the user hits first.
     var hasSeenNetworkPrivacyUpgradeNotice: Bool = false {
         didSet {
@@ -1677,6 +1677,51 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
         rewriteRules.removeAll { $0.id == id }
         rewriteSkipReasons.removeValue(forKey: id)
+    }
+
+    /// Undoable removal used by Settings ▸ Rewrites. Applies the same catalog
+    /// bookkeeping as `removeRewriteRule`; Undo puts the rule back verbatim (including
+    /// its signed-catalog provenance) at its original position.
+    @discardableResult
+    func deleteRewriteRule(id: UUID, undoManager: UndoManager?) -> Int? {
+        guard let index = rewriteRules.firstIndex(where: { $0.id == id }) else { return nil }
+        let removed = rewriteRules[index]
+        let wasCatalogApplied = catalogAppliedRuleNames.contains(removed.name)
+        removeRewriteRule(id: id)
+        if let undoManager {
+            undoManager.registerUndo(withTarget: self) { manager in
+                MainActor.assumeIsolated {
+                    manager.restoreRewriteRule(removed, at: index, catalogApplied: wasCatalogApplied, undoManager: undoManager)
+                }
+            }
+            undoManager.setActionName("Delete Rewrite")
+        }
+        return index
+    }
+
+    /// Re-inserts a previously stored rewrite at `index` (clamped). The rule already
+    /// passed validation when it was stored, so it is restored as-is. Registers the
+    /// matching redo (delete) when an undo manager is supplied.
+    func restoreRewriteRule(_ rule: URLRewriteRule, at index: Int, catalogApplied: Bool = false, undoManager: UndoManager?) {
+        guard !rewriteRules.contains(where: { $0.id == rule.id }) else { return }
+        let clamped = min(max(index, 0), rewriteRules.count)
+        rewriteRules.insert(rule, at: clamped)
+        if catalogApplied {
+            catalogAppliedRuleNames.insert(rule.name)
+        }
+        if let undoManager {
+            undoManager.registerUndo(withTarget: self) { manager in
+                MainActor.assumeIsolated {
+                    _ = manager.deleteRewriteRule(id: rule.id, undoManager: undoManager)
+                }
+            }
+            undoManager.setActionName("Delete Rewrite")
+        }
+    }
+
+    /// Drag-to-reorder in Settings ▸ Rewrites (`List.onMove`).
+    func moveRewriteRules(from offsets: IndexSet, to destination: Int) {
+        rewriteRules.move(fromOffsets: offsets, toOffset: destination)
     }
 
     func duplicateRewriteRule(id: UUID) {

@@ -2,285 +2,72 @@ import SwiftUI
 import AppKit
 
 extension SettingsView {
-    var appsSection: some View {
-        @Bindable var manager = browserManager
-
-        return SettingsDetailScaffold(
-            title: "Apps",
-            subtitle: "Review native deep links.",
-            systemImage: "app.badge",
-            actions: {
-                Button("Refresh Signed Directory", systemImage: "arrow.clockwise") {
-                    refreshNativeAppDirectory()
-                }
-                .controlSize(.small)
-                .disabled(isRefreshingNativeAppDirectory)
-                .accessibilityIdentifier("settings.nativeApps.refreshButton")
-            },
-            content: {
-                VStack(alignment: .leading, spacing: 16) {
-                    SettingsGroup(
-                        "Native Link Apps",
-                        subtitle: "Disabled by default. Chowser opens a native URL only after you approve its exact signed hosts and transforms."
-                    ) {
-                        if let directory = nativeAppDirectory {
-                            let installed = installedNativeApps(in: directory)
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Signed directory v\(directory.directory.catalogVersion) · key \(directory.provenance.keyID)")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                Text(directory.provenance.source == .cache
-                                    ? "Using the verified last-known-good cache. Refresh to check for additions."
-                                    : "Freshly verified from the hosted directory.")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(14)
-
-                            SettingsDivider()
-
-                            if installed.isEmpty {
-                                SettingsRow(
-                                    title: "No supported native apps installed",
-                                    subtitle: "Refresh after installing an app, or wait for it to be added to the signed directory."
-                                ) {
-                                    EmptyView()
-                                }
-                            } else {
-                                ForEach(installed) { installedApp in
-                                    NativeAppConsentRow(
-                                        entry: installedApp.entry,
-                                        bundleIdentifier: installedApp.bundleIdentifier,
-                                        isApproved: manager.isNativeAppApproved(installedApp.entry),
-                                        needsReview: manager.nativeAppApprovals[installedApp.entry.id] != nil
-                                            && !manager.isNativeAppApproved(installedApp.entry)
-                                    ) { enabled in
-                                        if enabled {
-                                            manager.approveNativeApp(installedApp.entry)
-                                        } else {
-                                            manager.revokeNativeApp(entryID: installedApp.entry.id)
-                                        }
-                                    }
-                                    if installedApp.id != installed.last?.id {
-                                        SettingsDivider()
-                                    }
-                                }
-                            }
-                        } else {
-                            SettingsRow(
-                                title: "No signed directory cached",
-                                subtitle: "Refresh to download the fixed catalog endpoints. Chowser never sends the link you are opening."
-                            ) {
-                                Button("Refresh") { refreshNativeAppDirectory() }
-                                    .controlSize(.small)
-                                    .disabled(isRefreshingNativeAppDirectory)
-                            }
-                        }
-                    }
-                }
-            }
-        )
-        .onAppear {
-            guard nativeAppDirectory == nil else { return }
-            nativeAppDirectory = NativeAppDirectoryService.shared.currentDirectory
-                ?? NativeAppDirectoryService.shared.loadLastKnownGood()
-        }
-    }
-
-    private func installedNativeApps(
-        in directory: VerifiedNativeAppDirectory
-    ) -> [InstalledNativeApp] {
-        directory.directory.apps.compactMap { entry in
-            guard let bundleIdentifier = NativeAppDirectoryService.shared
-                .installedBundleIdentifier(for: entry) else {
-                return nil
-            }
-            return InstalledNativeApp(entry: entry, bundleIdentifier: bundleIdentifier)
-        }
-    }
-
-    private func refreshNativeAppDirectory() {
-        guard !isRefreshingNativeAppDirectory else { return }
-        isRefreshingNativeAppDirectory = true
-        Task {
-            let directory = await NativeAppDirectoryService.shared.refresh()
-            isRefreshingNativeAppDirectory = false
-            guard let directory else {
-                presentSettingsMessage(
-                    "Couldn't Verify Native App Directory",
-                    "The download, signature, or catalog version was rejected. A previously verified directory remains in use if available."
-                )
-                return
-            }
-            nativeAppDirectory = directory
-        }
-    }
-
+    /// Settings ▸ General: default-browser status, startup and Dock presence, updates,
+    /// and the version.
     var generalSection: some View {
         @Bindable var manager = browserManager
 
         return SettingsDetailScaffold(
             title: "General",
-            subtitle: "Startup, imports, system integration, and maintenance.",
+            subtitle: "How Chowser starts and stays up to date.",
             systemImage: "gearshape",
+            scrollsContent: true,
             content: {
-                VStack(alignment: .leading, spacing: 16) {
-                    SettingsGroup("App Mode", subtitle: "Choose how Chowser lives on your Mac.") {
-                        VStack(spacing: 8) {
-                            AppModeOptionRow(
-                                icon: "dock.rectangle",
-                                title: "App",
-                                subtitle: "Dock icon, appears in Cmd-Tab.",
-                                isSelected: manager.appMode == .app
-                            ) {
-                                transitionAppMode(to: .app)
-                            }
-                            .accessibilityIdentifier("settings.appMode.app")
-
-                            AppModeOptionRow(
-                                icon: "menubar.rectangle",
-                                title: "Menu Bar",
-                                subtitle: "No Dock icon, lives in the menu bar only.",
-                                isSelected: manager.appMode == .menuBar
-                            ) {
-                                transitionAppMode(to: .menuBar)
-                            }
-                            .accessibilityIdentifier("settings.appMode.menuBar")
-                        }
-                        .padding(14)
+                VStack(alignment: .leading, spacing: 20) {
+                    SettingsGroup("Default Browser") {
+                        DefaultBrowserStatusRow()
                     }
 
                     SettingsGroup("Startup") {
-                        SettingsRow(
-                            title: "Launch Chowser at login",
-                            subtitle: "Start automatically when you sign in."
-                        ) {
-                            Toggle("", isOn: $manager.launchAtLogin)
+                        SettingsRow(title: "Launch at login") {
+                            Toggle("Launch at login", isOn: $manager.launchAtLogin)
                                 .labelsHidden()
                                 .toggleStyle(.switch)
-                        }
-                    }
-
-                    #if DIRECT_DISTRIBUTION
-                    if BrowserManager.hasAppStoreInstallPreferences {
-                        SettingsGroup("Moving from the App Store") {
-                            SettingsRow(
-                                title: "Import from the App Store version",
-                                subtitle: "Copy browsers, rules and rewrites from the App Store or TestFlight install on this Mac."
-                            ) {
-                                Button("Import") { importFromAppStoreInstall() }
-                                    .controlSize(.small)
-                                    .accessibilityIdentifier("settings.importFromAppStoreInstall")
-                            }
-                        }
-                    }
-                    #endif
-
-                    SettingsGroup("Import Behavior") {
-                        SettingsRow(title: "Skip existing rules", subtitle: "Ignore imported rules that already exist.") {
-                            Toggle("", isOn: $manager.skipExistingImportedRules)
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .accessibilityIdentifier("settings.importRulesSkipExisting")
+                                .accessibilityIdentifier("settings.general.launchAtLogin")
                         }
 
                         SettingsDivider()
 
-                        SettingsRow(title: "Skip existing browsers", subtitle: "Ignore imported browsers that already exist.") {
-                            Toggle("", isOn: $manager.skipExistingImportedBrowsers)
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .accessibilityIdentifier("settings.importBrowsersSkipExisting")
-                        }
-                    }
-
-                    SettingsGroup("System") {
                         SettingsRow(
-                            title: "Default Browser",
-                            subtitle: BrowserManager.isDefaultBrowser()
-                                ? "Chowser is currently the default browser."
-                                : "Set Chowser as the default handler for HTTP and HTTPS links."
+                            title: "Show in Dock",
+                            subtitle: manager.appMode == .app
+                                ? "Chowser has a Dock icon and appears in Command-Tab."
+                                : "Chowser lives only in the menu bar."
                         ) {
-                            Button("Set as Default") {
-                                BrowserManager.setAsDefaultBrowser()
-                            }
-                            .disabled(BrowserManager.isDefaultBrowser())
-                            .controlSize(.small)
-                            .accessibilityLabel("Set Chowser as the default browser")
+                            Toggle("Show in Dock", isOn: Binding(
+                                get: { manager.appMode == .app },
+                                set: { transitionAppMode(to: $0 ? .app : .menuBar) }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .accessibilityIdentifier("settings.general.showInDock")
                         }
-
-                        SettingsDivider()
-
-                        MCPServerSettingsRow()
                     }
 
                     updatesSettingsGroup
 
-                    SettingsGroup("Maintenance") {
-                        SettingsRow(
-                            title: "Reset Setup",
-                            subtitle: "Restore the first-launch state with Safari as option 1."
-                        ) {
-                            Button("Reset to Fresh Setup…", role: .destructive) {
-                                showingResetConfirmation = true
-                            }
-                            .controlSize(.small)
-                            .accessibilityIdentifier("settings.resetButton")
-                        }
+                    HStack(spacing: 10) {
+                        Image(nsImage: BrowserManager.currentAppIcon())
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 32, height: 32)
+                            .accessibilityHidden(true)
 
-                        SettingsDivider()
-
-                        SettingsRow(
-                            title: "Replay Onboarding",
-                            subtitle: "Open the Welcome and Setup flow again."
-                        ) {
-                            Button("Replay") {
-                                OnboardingManager.shared.resetOnboarding()
-                                OnboardingManager.shared.showOnboardingWindow {}
-                            }
-                            .controlSize(.small)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Chowser \(appVersion)")
+                                .font(.callout.weight(.medium))
+                                .textSelection(.enabled)
+                            Text(distributionDescription)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
-
-                    SettingsGroup("About") {
-                        HStack(spacing: 12) {
-                            Image(nsImage: BrowserManager.currentAppIcon())
-                                .resizable()
-                                .interpolation(.high)
-                                .frame(width: 36, height: 36)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Chowser")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text("A browser chooser for macOS")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                Text("Version \(appVersion)")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                            }
-
-                            Spacer()
-                        }
-                        .padding(14)
-
-                        SettingsDivider()
-
-                        SettingsRow(
-                            title: "Diagnostics",
-                            subtitle: "Review privacy-safe startup, App Mode, window, and termination events or export a support report."
-                        ) {
-                            Button("Open Diagnostics…") {
-                                DiagnosticsWindowController.shared.showDiagnostics()
-                            }
-                            .controlSize(.small)
-                            .accessibilityIdentifier("settings.diagnosticsButton")
-                        }
-                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("settings.general.about")
                 }
             }
         )
+        .accessibilityIdentifier("settings.generalSection")
     }
 
     var appVersion: String {
@@ -289,21 +76,44 @@ extension SettingsView {
         return "\(shortVersion) (\(build))"
     }
 
+    private var distributionDescription: String {
+        #if DIRECT_DISTRIBUTION
+        return "A browser chooser for macOS · direct download"
+        #else
+        return "A browser chooser for macOS · Mac App Store"
+        #endif
+    }
+
     @ViewBuilder
     private var updatesSettingsGroup: some View {
         #if DIRECT_DISTRIBUTION
         SettingsGroup(
             "Updates",
             subtitle: updateController.isConfigured
-                ? "Keep the direct-download build current through signed GitHub releases."
+                ? nil
                 : "Update signing is not configured in this local build."
         ) {
             SettingsRow(
-                title: "Check for updates automatically",
-                subtitle: "Check once a day while Chowser is running."
+                title: "Update channel",
+                subtitle: updateController.includesBetaReleases
+                    ? "Beta builds arrive earlier and may have rough edges."
+                    : nil
             ) {
+                Picker("Update channel", selection: $updateController.includesBetaReleases) {
+                    Text("Stable").tag(false)
+                    Text("Beta").tag(true)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .accessibilityIdentifier("settings.updates.includeBeta")
+            }
+
+            SettingsDivider()
+
+            SettingsRow(title: "Check for updates automatically") {
                 Toggle(
-                    "",
+                    "Check for updates automatically",
                     isOn: Binding(
                         get: { updateController.automaticallyChecksForUpdates },
                         set: { updateController.automaticallyChecksForUpdates = $0 }
@@ -319,10 +129,10 @@ extension SettingsView {
 
             SettingsRow(
                 title: "Download updates automatically",
-                subtitle: "Download in the background and install when Chowser quits."
+                subtitle: "Installs when Chowser quits."
             ) {
                 Toggle(
-                    "",
+                    "Download updates automatically",
                     isOn: Binding(
                         get: { updateController.automaticallyDownloadsUpdates },
                         set: { updateController.automaticallyDownloadsUpdates = $0 }
@@ -336,35 +146,16 @@ extension SettingsView {
 
             SettingsDivider()
 
-            SettingsRow(
-                title: "Include beta releases",
-                subtitle: "Get early builds that may be less stable. Stable releases remain available."
-            ) {
-                Toggle("", isOn: $updateController.includesBetaReleases)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .accessibilityIdentifier("settings.updates.includeBeta")
-            }
-
-            SettingsDivider()
-
-            SettingsRow(
-                title: "Current Version",
-                subtitle: "Version \(appVersion)"
-            ) {
-                Button("Check Now…") {
+            SettingsRow(title: "Check for a newer version") {
+                Button("Check Now") {
                     updateController.checkForUpdates()
                 }
-                .controlSize(.small)
                 .disabled(!updateController.canCheckForUpdates)
                 .accessibilityIdentifier("settings.updates.checkNow")
             }
         }
         #else
-        SettingsGroup(
-            "Updates",
-            subtitle: "This build receives reviewed updates from Apple."
-        ) {
+        SettingsGroup("Updates") {
             SettingsRow(
                 title: "Managed by the Mac App Store",
                 subtitle: "Automatic update preferences are controlled in the App Store."
@@ -372,31 +163,16 @@ extension SettingsView {
                 Button("Open App Store…") {
                     appStoreUpdateProvider.openAppStore()
                 }
-                .controlSize(.small)
                 .accessibilityIdentifier("settings.updates.openAppStore")
             }
         }
         #endif
     }
 
-    #if DIRECT_DISTRIBUTION
-    private func importFromAppStoreInstall() {
-        do {
-            let summary = try browserManager.importFromAppStoreInstall()
-            let lines = [("Browsers", summary.browsers), ("Rules", summary.rules), ("Rewrites", summary.rewrites)]
-                .map { name, part in "\(name): \(part.added) added, \(part.updated) updated, \(part.skipped + part.invalid) skipped" }
-            presentSettingsMessage("Imported from the App Store version", lines.joined(separator: "\n"))
-        } catch {
-            presentSettingsMessage(
-                "Import failed",
-                "Chowser couldn't read the App Store version's settings. If macOS asked to allow access to another app's data, choose Allow and try again. You can also export from the App Store version and import the files here.\n\n\(error.localizedDescription)"
-            )
-        }
-    }
-    #endif
-
+    /// Keeps the existing App Mode transition API and its failure alert.
     @MainActor
     private func transitionAppMode(to mode: ChowserAppMode) {
+        guard mode != browserManager.appMode else { return }
         guard case .failure(let error) = AppDelegate.transitionAppMode(to: mode) else { return }
 
         let alert = NSAlert()
@@ -408,184 +184,78 @@ extension SettingsView {
     }
 }
 
-private struct InstalledNativeApp: Identifiable {
-    let entry: NativeAppDirectoryEntry
-    let bundleIdentifier: String
-
-    var id: String { entry.id }
-}
-
-private struct NativeAppConsentRow: View {
-    let entry: NativeAppDirectoryEntry
-    let bundleIdentifier: String
-    let isApproved: Bool
-    let needsReview: Bool
-    let onToggle: (Bool) -> Void
+/// Live default-browser status. Re-reads Launch Services when Settings appears, when the
+/// app becomes active, and briefly after "Set as Default" (macOS asks the user to
+/// confirm in a system dialog, so the change lands asynchronously).
+struct DefaultBrowserStatusRow: View {
+    @State private var isDefault = BrowserManager.isDefaultBrowser()
+    @State private var currentDefaultName = DefaultBrowserStatusRow.defaultBrowserName()
+    @State private var pollTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                if let icon = BrowserManager.icon(forBrowserBundleID: bundleIdentifier) {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: 32, height: 32)
-                } else {
-                    Image(systemName: "app.fill")
-                        .font(.system(size: 24))
-                        .frame(width: 32, height: 32)
-                        .foregroundStyle(.secondary)
-                }
+        HStack(spacing: 10) {
+            Circle()
+                .fill(isDefault ? Color.green : Color.orange)
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 7) {
-                        Text(entry.name)
-                            .font(.system(size: 13, weight: .semibold))
-                        if needsReview {
-                            Text("CHANGED — REVIEW AGAIN")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                    Text(entry.summary)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Text(bundleIdentifier)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .textSelection(.enabled)
-                }
-
-                Spacer()
-
-                Toggle("Open links in \(entry.name)", isOn: Binding(
-                    get: { isApproved },
-                    set: onToggle
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .accessibilityIdentifier("settings.nativeApps.\(entry.id).toggle")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isDefault
+                    ? "Chowser is your default browser"
+                    : "\(currentDefaultName ?? "Another app") is your default browser")
+                    .font(.system(size: 13, weight: .medium))
+                Text(isDefault
+                    ? "Every link you click goes through your rules."
+                    : "Links open there directly, so your rules don’t run.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("settings.general.defaultBrowserStatus")
 
-            VStack(alignment: .leading, spacing: 5) {
-                Label("Web hosts: \(sourceHosts.joined(separator: ", "))", systemImage: "globe")
-                Label("Native schemes: \(entry.nativeSchemes.map { $0 + ":" }.joined(separator: ", "))", systemImage: "app.badge.checkmark")
-                ForEach(entry.rules) { rule in
-                    Text("• \(rule.reviewDescription)")
-                        .textSelection(.enabled)
-                }
-            }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.secondary)
+            Spacer(minLength: 16)
 
-            Label(
-                "Approval is revoked automatically if hosts, bundle IDs, schemes, or transforms change.",
-                systemImage: "checkmark.shield"
-            )
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(.secondary)
-        }
-        .padding(14)
-    }
-
-    private var sourceHosts: [String] {
-        var hosts: [String] = []
-        for host in entry.rules.flatMap(\.source.hosts) where !hosts.contains(host) {
-            hosts.append(host)
-        }
-        return hosts
-    }
-
-}
-
-struct MCPServerSettingsRow: View {
-    @State private var tokenCopied = false
-
-    private let server = MCPServer.shared
-    @Bindable private var manager = BrowserManager.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(server.isRunning ? Color.green : Color.secondary.opacity(0.45))
-                    .frame(width: 8, height: 8)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Local API Server")
-                        .font(.system(size: 13, weight: .medium))
-
-                    Text(server.isRunning ? "Running on port \(server.port)" : "Stopped")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button(server.isRunning ? "Stop" : "Start") {
-                    if server.isRunning {
-                        server.stop()
-                    } else {
-                        server.start()
-                    }
-                }
-                .controlSize(.small)
-            }
-
-            if server.isRunning {
-                HStack(spacing: 8) {
-                    Text(server.authToken)
-                        .font(.system(size: 11, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("settings.mcpAuthToken")
-
-                    Button(tokenCopied ? "Copied" : "Copy", systemImage: tokenCopied ? "checkmark" : "doc.on.clipboard") {
-                        copyToken()
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(tokenCopied ? .green : .secondary)
-                }
-                .padding(10)
-                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            }
-
-            Text("The server listens only on this Mac and requires the generated bearer token.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Divider()
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Start automatically at launch")
-                        .font(.system(size: 12, weight: .medium))
-                    Text("Or set from Terminal: defaults write in.sreerams.Chowser mcpAutoStartEnabled -bool true")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                Spacer()
-                Toggle("", isOn: $manager.mcpAutoStartEnabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .accessibilityIdentifier("settings.mcpAutoStart")
+            if !isDefault {
+                Button("Set as Default", action: setAsDefault)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityLabel("Set Chowser as the default browser")
+                    .accessibilityIdentifier("settings.general.setDefaultBrowser")
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: server.isRunning)
+        .padding(.vertical, 12)
+        .onAppear(perform: refresh)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refresh()
+        }
+        .onDisappear {
+            pollTask?.cancel()
+            pollTask = nil
+        }
     }
 
-    private func copyToken() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(server.authToken, forType: .string)
-        withAnimation { tokenCopied = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation { tokenCopied = false }
+    private func setAsDefault() {
+        BrowserManager.setAsDefaultBrowser()
+        pollTask?.cancel()
+        pollTask = Task { @MainActor in
+            for _ in 0..<30 {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                refresh()
+                if isDefault { return }
+            }
         }
+    }
+
+    private func refresh() {
+        isDefault = BrowserManager.isDefaultBrowser()
+        currentDefaultName = Self.defaultBrowserName()
+    }
+
+    private static func defaultBrowserName() -> String? {
+        guard let url = URL(string: "https://example.com"),
+              let appURL = NSWorkspace.shared.urlForApplication(toOpen: url) else { return nil }
+        return FileManager.default.displayName(atPath: appURL.path)
+            .replacingOccurrences(of: ".app", with: "")
     }
 }

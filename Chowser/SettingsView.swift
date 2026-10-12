@@ -16,23 +16,18 @@ struct SettingsView: View {
     @State var currentPrefillURL: URL?
     @State var selectedSection: SettingsSection = .browsers
     @State var showingResetConfirmation = false
-    @State var rewriteSearchText = ""
     @State var newShortenerHost = ""
-    @State var selectedRuleId: UUID?
     /// Rules page editing state (selection, unsaved drafts). Owned here so drafts
     /// survive switching sidebar sections.
     @State var rulesEditor = RulesEditorModel(manager: BrowserManager.shared)
     @State var preselectedRuleBrowserIdentity: String?
     @State var showingRuleMergeReview = false
-    @State var showingAddRewriteSheet = false
     @State var profileAccessStatus = SandboxBookmarkManager.shared.grantStatus
     @State var operationAlert: SettingsOperationAlert?
     @State var rewriteCatalogSheet: VerifiedRewriteCatalog?
     @State var isCheckingRewriteCatalog = false
     @State var nativeAppDirectory: VerifiedNativeAppDirectory?
     @State var isRefreshingNativeAppDirectory = false
-
-    let shortcutOptions = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
     struct SettingsOperationAlert: Identifiable {
         let id = UUID()
@@ -44,34 +39,31 @@ struct SettingsView: View {
         case browsers = "Browsers"
         case rules = "Rules"
         case rewrites = "Rewrites"
-        case behavior = "Behavior"
-        case appearance = "Appearance"
-        case apps = "Apps"
+        case nativeApps = "Native Apps"
+        case picker = "Picker"
+        case privacy = "Privacy"
         case general = "General"
+        case backup = "Backup & Advanced"
 
         var id: String { rawValue }
+
+        /// Sidebar groups, separated by a small gap.
+        static let groups: [[SettingsSection]] = [
+            [.browsers, .rules, .rewrites, .nativeApps],
+            [.picker, .privacy],
+            [.general, .backup],
+        ]
 
         var icon: String {
             switch self {
             case .browsers: return "globe"
             case .rules: return "point.topleft.down.curvedto.point.bottomright.up"
             case .rewrites: return "arrow.triangle.2.circlepath"
-            case .behavior: return "arrow.triangle.branch"
-            case .appearance: return "paintpalette"
-            case .apps: return "app.badge"
+            case .nativeApps: return "app.badge"
+            case .picker: return "square.grid.2x2"
+            case .privacy: return "hand.raised"
             case .general: return "gearshape"
-            }
-        }
-
-        var subtitle: String {
-            switch self {
-            case .browsers: return "Picker options"
-            case .rules: return "Automatic routing"
-            case .rewrites: return "URL transformations"
-            case .behavior: return "Fallback & privacy"
-            case .appearance: return "Picker look"
-            case .apps: return "Native links"
-            case .general: return "Startup & maintenance"
+            case .backup: return "archivebox"
             }
         }
 
@@ -80,10 +72,13 @@ struct SettingsView: View {
             case .browsers: return "settings.sidebar.browsers"
             case .rules: return "settings.sidebar.rules"
             case .rewrites: return "settings.sidebar.rewrites"
-            case .behavior: return "settings.sidebar.behavior"
-            case .appearance: return "settings.sidebar.appearance"
-            case .apps: return "settings.sidebar.apps"
+            case .nativeApps: return "settings.sidebar.nativeApps"
+            // The Picker section is the former Appearance page; UI tests target it by
+            // this identifier.
+            case .picker: return "settings.sidebar.appearance"
+            case .privacy: return "settings.sidebar.privacy"
             case .general: return "settings.sidebar.general"
+            case .backup: return "settings.sidebar.backup"
             }
         }
     }
@@ -98,9 +93,6 @@ struct SettingsView: View {
         .frame(minWidth: 860, idealWidth: 1100, maxWidth: .infinity, minHeight: 560, idealHeight: 680, maxHeight: .infinity)
         .sheet(isPresented: $showingRuleMergeReview) {
             RuleMergeReviewSheet(manager: browserManager, isPresented: $showingRuleMergeReview)
-        }
-        .sheet(isPresented: $showingAddRewriteSheet) {
-            RewriteRuleEditorSheet(manager: browserManager, isPresented: $showingAddRewriteSheet)
         }
         .sheet(item: $rewriteCatalogSheet) { catalog in
             RewriteCatalogSelectionSheet(
@@ -178,17 +170,12 @@ struct SettingsView: View {
 
     private var settingsSidebar: some View {
         List(selection: $selectedSection) {
-            Section("Configuration") {
-                sidebarRow(for: .browsers)
-                sidebarRow(for: .rules)
-                sidebarRow(for: .rewrites)
-                sidebarRow(for: .behavior)
-                sidebarRow(for: .appearance)
-            }
-
-            Section("System") {
-                sidebarRow(for: .apps)
-                sidebarRow(for: .general)
+            ForEach(Array(SettingsSection.groups.enumerated()), id: \.offset) { _, group in
+                Section {
+                    ForEach(group) { section in
+                        sidebarRow(for: section)
+                    }
+                }
             }
         }
         .listStyle(.sidebar)
@@ -204,63 +191,47 @@ struct SettingsView: View {
                 rulesSection
             case .rewrites:
                 rewritesSection
-            case .behavior:
-                behaviorSection
-            case .appearance:
+            case .nativeApps:
+                nativeAppsSection
+            case .picker:
                 appearanceSection
-            case .apps:
-                appsSection
+            case .privacy:
+                privacySection
             case .general:
                 generalSection
+            case .backup:
+                backupSection
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    /// Monochrome symbols; the sidebar tints them with the single app accent color.
     @ViewBuilder
     private func sidebarRow(for section: SettingsSection) -> some View {
         let count = sidebarBadge(for: section)
 
         NavigationLink(value: section) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: section.icon)
-                    .font(.system(size: 13))
-                    .foregroundStyle(sectionAccentColor(for: section))
                     .frame(width: 18)
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
 
                 Text(section.rawValue)
-                    .font(.system(size: 13, weight: .medium))
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 if count > 0 {
                     Text("\(count)")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.caption)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.secondary.opacity(0.12), in: Capsule())
+                        .accessibilityLabel("\(count) items")
                 }
             }
         }
         .accessibilityIdentifier(section.accessibilityIdentifier)
-    }
-
-    func sectionSearchField(
-        placeholder: String,
-        text: Binding<String>,
-        accessibilityIdentifier: String
-    ) -> some View {
-        SettingsSearchField(
-            placeholder: placeholder,
-            text: text,
-            accessibilityIdentifier: accessibilityIdentifier
-        )
-    }
-
-    func getAppIcon(bundleId: String) -> NSImage? {
-        BrowserManager.icon(forBrowserBundleID: bundleId)
     }
 
     func presentSettingsMessage(_ title: String, _ message: String) {
@@ -280,18 +251,6 @@ struct SettingsView: View {
         presentSettingsMessage(successTitle, message)
     }
 
-    private func sectionAccentColor(for section: SettingsSection) -> Color {
-        switch section {
-        case .browsers: return .blue
-        case .rules: return .orange
-        case .rewrites: return .indigo
-        case .behavior: return .teal
-        case .appearance: return .pink
-        case .apps: return .purple
-        case .general: return .green
-        }
-    }
-
     func sidebarBadge(for section: SettingsSection) -> Int {
         switch section {
         case .browsers:
@@ -300,25 +259,13 @@ struct SettingsView: View {
             return browserManager.routingRules.filter(\.isEnabled).count
         case .rewrites:
             return browserManager.rewriteRules.filter(\.isEnabled).count
-        case .apps:
+        case .nativeApps:
             return browserManager.nativeAppApprovals.count
-        case .behavior, .appearance, .general:
+        case .picker, .privacy, .general, .backup:
             return 0
         }
     }
 
-    func browser(for rule: BrowserRoutingRule) -> BrowserConfig? {
-        browserManager.configuredBrowsers.first {
-            $0.bundleId == rule.browserBundleId && $0.profile == rule.profile
-        }
-    }
-
-    func browserIdentityParts(from identity: String) -> (bundleId: String, profile: String?) {
-        let parts = identity.split(separator: "|", omittingEmptySubsequences: false)
-        let bundleId = parts.first.map(String.init) ?? ""
-        let profile = parts.count > 1 && !parts[1].isEmpty ? String(parts[1]) : nil
-        return (bundleId, profile)
-    }
 }
 
 struct SettingsDetailScaffold<Actions: View, Content: View>: View {
@@ -485,41 +432,6 @@ struct SettingsDivider: View {
     var body: some View {
         Divider()
             .padding(.leading, 14)
-    }
-}
-
-struct SettingsSearchField: View {
-    let placeholder: String
-    @Binding var text: String
-    let accessibilityIdentifier: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .accessibilityIdentifier(accessibilityIdentifier)
-
-            if !text.isEmpty {
-                Button("Clear", systemImage: "xmark.circle.fill") {
-                    text = ""
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.separator.opacity(0.35), lineWidth: 1)
-        )
     }
 }
 
