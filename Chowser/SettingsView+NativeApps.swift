@@ -117,7 +117,7 @@ private struct NativeAppsSettingsPage: View {
                         .controlSize(.small)
                 }
                 Spacer()
-                Button("Check for Updates", action: onRefresh)
+                Button("Refresh App List", action: onRefresh)
                     .disabled(isRefreshing)
                     .accessibilityIdentifier("settings.nativeApps.refreshButton")
             }
