@@ -305,18 +305,17 @@ private struct AppearancePreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Preview")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Picker("Backdrop", selection: $backdrop) {
-                    ForEach(PreviewBackdrop.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 210)
+            Text("Preview")
+                .font(.system(size: 13, weight: .semibold))
+            // Own row: four segments don't fit beside the title in the 320pt pane, and a
+            // segmented control overflows (gets clipped) rather than shrinking.
+            Picker("Backdrop", selection: $backdrop) {
+                ForEach(PreviewBackdrop.allCases) { Text($0.rawValue).tag($0) }
             }
-            Text("Live picker sample. Clicking a browser opens \(Self.sampleURL.absoluteString).")
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            Text("A live sample. Click a browser to try it.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
@@ -326,7 +325,7 @@ private struct AppearancePreview: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: compact ? 190 : 320)
-            .clipShape(.rect(cornerRadius: 10))
+            .clipShape(.rect(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(.separator.opacity(0.35), lineWidth: 1)
