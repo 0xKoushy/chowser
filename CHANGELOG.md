@@ -2,6 +2,16 @@
 
 All notable changes to Chowser are documented here.
 
+## [3.9.12] - 2026-10-12
+
+### Changed
+- **Rules are a table you can reorder.** Rules are checked top to bottom and the first match wins; drag a rule to change its priority. "When no rule matches" now sits at the top of the Rules page.
+- **Edit rules in a side panel.** Problems show up next to the field as you type, and nothing you type is thrown away. "Test a Link" in the toolbar shows which rule a link would match.
+- **Browsers are a reorderable list.** Rename in place, pick shortcuts (choosing one that's taken swaps the two), and edit profiles and launch arguments in a side panel. Add several detected browsers at once.
+- **Undo deletes.** Removing a rule or a browser can be undone with Cmd-Z.
+- **Hidden apps** moved to the Browsers page.
+- The Settings window opens a little larger so the list and side panel fit side by side.
+
 ## [3.9.11] - 2026-10-12
 
 ### Added
