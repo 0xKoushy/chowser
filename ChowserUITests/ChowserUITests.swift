@@ -196,22 +196,16 @@ final class ChowserUITests: XCTestCase {
         XCTAssertTrue(preview.isHittable, "The compact preview should remain visible while narrow controls scroll.")
     }
 
-    func testFallbackBrowserPickerHasExplicitEmptySelection() throws {
-        let behaviorButton = app.buttons["settings.sidebar.behavior"]
-        XCTAssertTrue(behaviorButton.waitForExistence(timeout: 5))
-        behaviorButton.click()
+    func testFallbackPickerLivesOnRulesPageAndDefaultsToPicker() throws {
+        let ui = ChowserAppDriver(app: app)
+        ui.openSettings()
+        ui.openRulesSection()
 
-        let fallbackModePicker = app.descendants(matching: .any)
-            .matching(identifier: "settings.behavior.fallbackModePicker")
+        let fallbackPicker = app.descendants(matching: .any)
+            .matching(identifier: "settings.rules.fallbackPicker")
             .firstMatch
-        XCTAssertTrue(fallbackModePicker.waitForExistence(timeout: 5))
-        fallbackModePicker.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).click()
-
-        let browserPicker = app.descendants(matching: .any)
-            .matching(identifier: "settings.behavior.fallbackBrowserPicker")
-            .firstMatch
-        XCTAssertTrue(browserPicker.waitForExistence(timeout: 5))
-        XCTAssertEqual(browserPicker.value as? String, "Choose Browser")
+        XCTAssertTrue(fallbackPicker.waitForExistence(timeout: 5))
+        XCTAssertEqual(fallbackPicker.value as? String, "Show the picker")
     }
 
     func testRadialPickerUsesCursorAsCenterAndDirectionSelectsBrowser() throws {
@@ -476,14 +470,16 @@ final class ChowserUITests: XCTestCase {
         ui.openSettings()
         ui.assertSettingsVisible()
 
-        if ui.browserDeleteButtons.count < 2 {
+        if ui.browserRows.count < 2 {
             ui.openAddBrowserSheet()
             ui.addFirstBrowserOption()
         }
 
-        XCTAssertGreaterThanOrEqual(ui.browserDeleteButtons.count, 2, "Need at least two rows to verify deletion.")
+        XCTAssertGreaterThanOrEqual(ui.browserRows.count, 2, "Need at least two rows to verify deletion.")
 
-        ui.browserDeleteButtons.element(boundBy: 1).click()
+        ui.browserRows.element(boundBy: 1).click()
+        XCTAssertTrue(ui.browserRemoveButton.waitForExistence(timeout: 5), "Remove button not found.")
+        ui.browserRemoveButton.click()
         ui.assertSettingsVisible()
     }
 
@@ -495,13 +491,13 @@ final class ChowserUITests: XCTestCase {
 
         ui.openAddBrowserSheet()
         ui.addFirstBrowserOption()
-        XCTAssertGreaterThanOrEqual(ui.browserDeleteButtons.count, 2, "Add browser should increase browser list size.")
+        XCTAssertGreaterThanOrEqual(ui.browserRows.count, 2, "Add browser should increase browser list size.")
 
         ui.openGeneralSection()
         ui.resetToFreshSetup()
         ui.openBrowsersSection()
 
-        XCTAssertEqual(ui.browserDeleteButtons.count, 1, "Fresh setup should restore one default browser.")
+        XCTAssertEqual(ui.browserRows.count, 1, "Fresh setup should restore one default browser.")
         XCTAssertTrue(ui.firstBrowserNameValue.localizedCaseInsensitiveContains("Safari"))
     }
 
@@ -602,13 +598,13 @@ final class ChowserUITests: XCTestCase {
         ui.openAddBrowserSheet()
 
         // Count browsers before adding
-        let beforeCount = ui.browserDeleteButtons.count
+        let beforeCount = ui.browserRows.count
 
         // Add the first available browser option
         ui.addFirstBrowserOption()
 
         // Browser list should grow by 1
-        let afterCount = ui.browserDeleteButtons.count
+        let afterCount = ui.browserRows.count
         XCTAssertEqual(afterCount, beforeCount + 1, "Adding a browser should increase the browser list count.")
     }
 
@@ -693,7 +689,7 @@ final class ChowserUITests: XCTestCase {
         ui.assertSettingsVisible()
 
         // Ensure multiple browsers are configured
-        if ui.browserDeleteButtons.count < 2 {
+        if ui.browserRows.count < 2 {
             ui.openAddBrowserSheet()
             ui.addFirstBrowserOption()
         }
@@ -702,17 +698,12 @@ final class ChowserUITests: XCTestCase {
         ui.openRulesSection()
         ui.openAddRuleSheet()
 
-        // Verify the browser picker is present in the add-rule sheet
-        let browserPicker = app.descendants(matching: .any).matching(identifier: "settings.addRule.browserPicker").firstMatch
-        XCTAssertTrue(browserPicker.waitForExistence(timeout: 5), "Browser picker should be present in add-rule sheet.")
+        // The inspector for the new rule shows its browser picker.
+        let browserPicker = app.descendants(matching: .any).matching(identifier: "settings.rule.browserPicker").firstMatch
+        XCTAssertTrue(browserPicker.waitForExistence(timeout: 5), "Browser picker should be present in the rule inspector.")
 
-        // Fill the rule and submit
         ui.addRule(hostPattern: "test.example.com")
         ui.assertRuleCreated()
-
-        // Verify the rule's browser picker in the rules list
-        let ruleBrowserPicker = app.descendants(matching: .any).matching(identifier: "settings.rule.browserPicker").firstMatch
-        XCTAssertTrue(ruleBrowserPicker.waitForExistence(timeout: 5), "Rule should have a browser picker.")
     }
 
     private func triggerOpenURLInChowser(_ urlString: String, file: StaticString = #filePath, line: UInt = #line) {
@@ -746,8 +737,14 @@ private struct ChowserAppDriver {
     }
     var settingsAddBrowserButton: XCUIElement { app.buttons["settings.addBrowserButton"] }
 
-    var browserDeleteButtons: XCUIElementQuery {
-        app.buttons.matching(identifier: "settings.browser.deleteButton")
+    /// One name label per row of the browsers list (in picker order).
+    var browserRows: XCUIElementQuery {
+        app.staticTexts.matching(identifier: "settings.browser.name")
+    }
+
+    /// The table footer's "-" button; removes the selected browser.
+    var browserRemoveButton: XCUIElement {
+        app.buttons["settings.browser.removeButton"]
     }
 
     var addSheetRoot: XCUIElement {
@@ -758,8 +755,8 @@ private struct ChowserAppDriver {
         app.staticTexts["picker.lastOpenedBrowser"]
     }
 
-    var browserNameFields: XCUIElementQuery {
-        app.textFields.matching(identifier: "settings.browser.nameField")
+    var addSheetConfirmButton: XCUIElement {
+        app.buttons["settings.addSheet.addButton"]
     }
 
     var firstPickerBrowserRow: XCUIElement {
@@ -789,25 +786,19 @@ private struct ChowserAppDriver {
         app.buttons["settings.addRuleButton"]
     }
 
-    var addRuleSheetRoot: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "settings.addRule.root").firstMatch
+    var ruleInspectorHostField: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "settings.rule.hostField").firstMatch
     }
 
-    var addRuleConfirmButton: XCUIElement {
-        app.buttons["settings.addRule.confirmButton"]
-    }
-
-    var addRuleQuickFillButton: XCUIElement {
-        app.buttons["settings.addRule.fillTestHostButton"]
-    }
-
-    var ruleHostFields: XCUIElementQuery {
-        app.descendants(matching: .any).matching(identifier: "settings.rule.hostField")
+    var rulesTable: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "settings.rules.table").firstMatch
     }
 
     var firstBrowserNameValue: String {
-        guard browserNameFields.count > 0 else { return "" }
-        return browserNameFields.element(boundBy: 0).value as? String ?? ""
+        guard browserRows.count > 0 else { return "" }
+        let label = browserRows.element(boundBy: 0)
+        if let value = label.value as? String, !value.isEmpty { return value }
+        return label.label
     }
 
     func assertPickerVisible(file: StaticString = #filePath, line: UInt = #line) {
@@ -861,9 +852,15 @@ private struct ChowserAppDriver {
     }
 
     func addFirstBrowserOption() {
-        let firstOption = app.descendants(matching: .any).matching(identifier: "settings.addSheet.option").firstMatch
-        XCTAssertTrue(firstOption.waitForExistence(timeout: 5), "No available browser option found.")
+        // Already-added browsers are listed too (checked + disabled); pick the first addable one.
+        let options = app.descendants(matching: .any).matching(identifier: "settings.addSheet.option")
+        XCTAssertTrue(options.firstMatch.waitForExistence(timeout: 5), "No browser option found.")
+        let firstOption = options.matching(NSPredicate(format: "isEnabled == true")).firstMatch
+        XCTAssertTrue(firstOption.exists, "No addable browser option found.")
         firstOption.click()
+
+        XCTAssertTrue(addSheetConfirmButton.waitForExistence(timeout: 5), "Add Browsers button not found.")
+        addSheetConfirmButton.click()
 
         let predicate = NSPredicate(format: "exists == false")
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: addSheetRoot)
@@ -880,39 +877,30 @@ private struct ChowserAppDriver {
         confirmButton.click()
     }
 
+    /// Adds a rule inline: the "+" button inserts a row and focuses the inspector's
+    /// "Link matches" field (there is no add-rule sheet anymore).
     func openAddRuleSheet() {
         XCTAssertTrue(addRuleButton.waitForExistence(timeout: 5), "Add rule button not found.")
         addRuleButton.click()
-        XCTAssertTrue(addRuleSheetRoot.waitForExistence(timeout: 5), "Add rule sheet should open.")
+        XCTAssertTrue(ruleInspectorHostField.waitForExistence(timeout: 5), "Rule inspector should open for the new rule.")
     }
 
     func addRule(hostPattern: String) {
-        // Fill the rule name field
-        let nameField = app.descendants(matching: .textField).matching(identifier: "settings.addRule.nameField").firstMatch
-        if nameField.waitForExistence(timeout: 3) {
-            nameField.click()
-            nameField.typeText("TestRule")
-        }
-
-        // Fill the host pattern field
-        let hostField = resolvedAddRuleHostField()
-        XCTAssertTrue(hostField.waitForExistence(timeout: 5), "Host pattern field not found.")
+        let hostField = ruleInspectorHostField
+        XCTAssertTrue(hostField.waitForExistence(timeout: 5), "Link matches field not found.")
         hostField.click()
         hostField.typeText(hostPattern)
-
-        // The "Add Rule" button has .keyboardShortcut(.defaultAction),
-        // so pressing Return triggers it. XCUI can't reliably read isEnabled
-        // on .defaultAction buttons, so we use the keyboard shortcut instead.
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        // Rules save as soon as they validate; Return ends editing.
         app.typeKey(.return, modifierFlags: [])
-
-        let predicate = NSPredicate(format: "exists == false")
-        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: addRuleSheetRoot)
-        _ = XCTWaiter.wait(for: [expectation], timeout: 5)
     }
 
     func assertRuleCreated(file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(ruleHostFields.firstMatch.waitForExistence(timeout: 5), "Expected at least one routing rule row.", file: file, line: line)
+        XCTAssertTrue(rulesTable.waitForExistence(timeout: 5), "Rules table should exist.", file: file, line: line)
+        let error = app.descendants(matching: .any).matching(identifier: "settings.rule.hostError").firstMatch
+        XCTAssertFalse(error.exists, "The new rule should be valid.", file: file, line: line)
+        let predicate = NSPredicate(format: "count > 0")
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: rulesTable.tableRows)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, "Expected at least one routing rule row.", file: file, line: line)
     }
 
     private func clickSidebarItem(identifier: String) {
@@ -929,20 +917,5 @@ private struct ChowserAppDriver {
         }
 
         XCTFail("Sidebar item \(identifier) not found.")
-    }
-
-    private func resolvedAddRuleHostField() -> XCUIElement {
-        let identifierMatch = app.descendants(matching: .any).matching(identifier: "settings.addRule.hostField").firstMatch
-        if identifierMatch.waitForExistence(timeout: 1) {
-            return identifierMatch
-        }
-
-        let textFields = addRuleSheetRoot.descendants(matching: .textField)
-        let secondField = textFields.element(boundBy: 1)
-        if secondField.waitForExistence(timeout: 1) {
-            return secondField
-        }
-
-        return textFields.firstMatch
     }
 }
