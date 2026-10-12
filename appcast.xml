@@ -3,6 +3,26 @@
     <channel>
         <title>Chowser</title>
         <item>
+            <title>3.9.12</title>
+            <pubDate>Mon, 12 Oct 2026 12:07:17 +0000</pubDate>
+            <link>https://github.com/bsreeram08/chowser/releases/tag/v3.9.12</link>
+            <sparkle:phasedRolloutInterval>86400</sparkle:phasedRolloutInterval>
+            <sparkle:version>202610121727</sparkle:version>
+            <sparkle:shortVersionString>3.9.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[
+### Changed
+- **Rules are a table you can reorder.** Rules are checked top to bottom and the first match wins; drag a rule to change its priority. "When no rule matches" now sits at the top of the Rules page.
+- **Edit rules in a side panel.** Problems show up next to the field as you type, and nothing you type is thrown away. "Test a Link" in the toolbar shows which rule a link would match.
+- **Browsers are a reorderable list.** Rename in place, pick shortcuts (choosing one that's taken swaps the two), and edit profiles and launch arguments in a side panel. Add several detected browsers at once.
+- **Undo deletes.** Removing a rule or a browser can be undone with Cmd-Z.
+- **Hidden apps** moved to the Browsers page.
+- The Settings window opens a little larger so the list and side panel fit side by side.
+
+]]></description>
+            <enclosure url="https://github.com/bsreeram08/chowser/releases/download/v3.9.12/Chowser-3.9.12.dmg" length="4442512" type="application/octet-stream" sparkle:edSignature="i11XWUID9yeciwrzi/hHBNgCUyG4kDUZ1+G4Rb821jMKyVKL3RvoJxNYVrOOi4xuUa55QMnkETyf0j1c9fcuDg=="/>
+        </item>
+        <item>
             <title>3.9.11</title>
             <pubDate>Mon, 12 Oct 2026 10:40:36 +0000</pubDate>
             <link>https://github.com/bsreeram08/chowser/releases/tag/v3.9.11</link>
@@ -81,6 +101,6 @@
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: g5f5tu+cYH+F0Cce9upynkyuBJSsqgIYnBvqcKQl6sKLoy9eHUmtktoX3BWJ9Egdpyu83/BOjzYhGW9M7KpwDw==
-length: 6155
+edSignature: S3bttyBOuF6a5NXEKFaa16JuVckXuzkdLsgLN1iwhqj1ptrBEBxdY99zEo9/5o05k+a5Q7odlE9yJFbcZmHdDQ==
+length: 7829
 -->
