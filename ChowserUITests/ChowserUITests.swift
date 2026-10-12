@@ -493,7 +493,7 @@ final class ChowserUITests: XCTestCase {
         ui.addFirstBrowserOption()
         XCTAssertGreaterThanOrEqual(ui.browserRows.count, 2, "Add browser should increase browser list size.")
 
-        ui.openGeneralSection()
+        ui.openBackupSection()
         ui.resetToFreshSetup()
         ui.openBrowsersSection()
 
@@ -653,22 +653,28 @@ final class ChowserUITests: XCTestCase {
         ui.openSettings()
         ui.openGeneralSection()
 
-        let appMode = app.buttons["settings.appMode.app"]
-        let menuBarMode = app.buttons["settings.appMode.menuBar"]
-        XCTAssertTrue(appMode.waitForExistence(timeout: 5))
-        XCTAssertTrue(menuBarMode.waitForExistence(timeout: 5))
+        // "Show in Dock" on = App mode, off = Menu Bar mode.
+        let showInDock = app.descendants(matching: .any)
+            .matching(identifier: "settings.general.showInDock").firstMatch
+        XCTAssertTrue(showInDock.waitForExistence(timeout: 5))
+        func isOn() -> Bool { "\(showInDock.value ?? "")" == "1" }
 
-        menuBarMode.click()
-        XCTAssertEqual(menuBarMode.value as? String, "selected")
+        if !isOn() { showInDock.click() }
+        XCTAssertTrue(isOn())
 
-        appMode.click()
-        XCTAssertEqual(appMode.value as? String, "selected")
+        showInDock.click()
+        XCTAssertFalse(isOn())
 
-        menuBarMode.click()
-        XCTAssertEqual(menuBarMode.value as? String, "selected")
+        showInDock.click()
+        XCTAssertTrue(isOn())
 
-        appMode.click()
-        XCTAssertEqual(appMode.value as? String, "selected")
+        showInDock.click()
+        XCTAssertFalse(isOn())
+
+        showInDock.click()
+        XCTAssertTrue(isOn())
+
+        ui.openBackupSection()
 
         let diagnosticsButton = app.buttons["settings.diagnosticsButton"]
         XCTAssertTrue(diagnosticsButton.waitForExistence(timeout: 5))
@@ -843,6 +849,10 @@ private struct ChowserAppDriver {
         clickSidebarItem(identifier: "settings.sidebar.rules")
     }
 
+    func openBackupSection() {
+        clickSidebarItem(identifier: "settings.sidebar.backup")
+    }
+
     func openAddBrowserSheet() {
         let addButton = app.buttons["settings.addBrowserButton"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add browser button not found.")
@@ -869,7 +879,7 @@ private struct ChowserAppDriver {
 
     func resetToFreshSetup() {
         let resetButton = app.buttons["settings.resetButton"]
-        XCTAssertTrue(resetButton.waitForExistence(timeout: 5), "Reset button not found in General section.")
+        XCTAssertTrue(resetButton.waitForExistence(timeout: 5), "Reset button not found in Backup & Advanced section.")
         resetButton.click()
 
         let confirmButton = app.buttons["action-button-1"]

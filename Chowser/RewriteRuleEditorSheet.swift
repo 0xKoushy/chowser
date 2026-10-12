@@ -121,12 +121,22 @@ struct RewriteActionFieldsView: View {
             .onChange(of: fields.forceSchemeEnabled) { _, _ in onCommit() }
             .onChange(of: fields.forceScheme) { _, _ in onCommit() }
 
-            actionRow(isOn: $fields.replaceHostEnabled, title: "Replace host") {
-                TextField("newhost.example.com", text: $fields.replaceHost)
+            // Field on its own line so it stays usable in the narrow Rewrites inspector.
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Replace host", isOn: $fields.replaceHostEnabled)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 12, weight: .medium))
+                TextField("Replacement host", text: $fields.replaceHost, prompt: Text("newhost.example.com"))
+                    .labelsHidden()
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, design: .monospaced))
+                    .lineLimit(1)
+                    .padding(8)
+                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                     .focused($focusedField, equals: .replaceHost)
                     .onSubmit(onCommit)
+                    .disabled(!fields.replaceHostEnabled)
+                    .opacity(fields.replaceHostEnabled ? 1 : 0.45)
             }
             .onChange(of: fields.replaceHostEnabled) { _, _ in onCommit() }
 
@@ -139,15 +149,19 @@ struct RewriteActionFieldsView: View {
                 Text("Add / replace query parameter")
                     .font(.system(size: 12, weight: .medium))
                 HStack(spacing: 8) {
-                    TextField("name", text: $fields.setParamName)
+                    TextField("Parameter name", text: $fields.setParamName, prompt: Text("name"))
+                        .labelsHidden()
                         .textFieldStyle(.plain)
+                        .lineLimit(1)
                         .font(.system(size: 12, design: .monospaced))
                         .padding(8)
                         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                         .focused($focusedField, equals: .setName)
                         .onSubmit(onCommit)
-                    TextField("value", text: $fields.setParamValue)
+                    TextField("Parameter value", text: $fields.setParamValue, prompt: Text("value"))
+                        .labelsHidden()
                         .textFieldStyle(.plain)
+                        .lineLimit(1)
                         .font(.system(size: 12, design: .monospaced))
                         .padding(8)
                         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
@@ -183,9 +197,11 @@ struct RewriteActionFieldsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
                 .font(.system(size: 12, weight: .medium))
-            TextField(placeholder, text: text)
+            TextField(label, text: text, prompt: Text(placeholder))
+                .labelsHidden()
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
+                .lineLimit(1)
                 .padding(8)
                 .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                 .focused(focus, equals: focusValue)
@@ -349,7 +365,7 @@ struct RewriteRuleEditorSheet: View {
             .padding(20)
             .background(Color.primary.opacity(0.01))
         }
-        .frame(width: 520, height: 700)
+        .frame(width: 520, height: 520)
         .accessibilityIdentifier("settings.addRewrite.root")
     }
 

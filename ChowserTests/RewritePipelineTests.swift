@@ -252,6 +252,46 @@ struct BrowserManagerRewriteTests {
         ).finalURL.scheme == "https")
     }
 
+    @Test("Deleting a rewrite is undoable and redoable at its original position")
+    @MainActor
+    func deleteRewriteUndoRedo() {
+        let manager = BrowserManager(defaults: makeTestDefaults())
+        manager.rewriteRules = []
+        for host in ["a.com", "b.com", "c.com"] {
+            _ = manager.addRewriteRule(URLRewriteRule(name: host, match: URLRewriteMatch(hostPattern: host), actions: [.removeFragment]))
+        }
+        let b = manager.rewriteRules[1]
+        let undoManager = UndoManager()
+        undoManager.groupsByEvent = false
+
+        undoManager.beginUndoGrouping()
+        let index = manager.deleteRewriteRule(id: b.id, undoManager: undoManager)
+        undoManager.endUndoGrouping()
+
+        #expect(index == 1)
+        #expect(manager.rewriteRules.map(\.name) == ["a.com", "c.com"])
+        #expect(undoManager.undoActionName == "Delete Rewrite")
+
+        undoManager.undo()
+        #expect(manager.rewriteRules.map(\.name) == ["a.com", "b.com", "c.com"])
+        #expect(manager.rewriteRules[1] == b)
+
+        undoManager.redo()
+        #expect(manager.rewriteRules.map(\.name) == ["a.com", "c.com"])
+    }
+
+    @Test("Moving rewrites by offsets reorders the pipeline")
+    @MainActor
+    func moveRewritesByOffsets() {
+        let manager = BrowserManager(defaults: makeTestDefaults())
+        manager.rewriteRules = []
+        for host in ["a.com", "b.com", "c.com"] {
+            _ = manager.addRewriteRule(URLRewriteRule(name: host, match: URLRewriteMatch(hostPattern: host), actions: [.removeFragment]))
+        }
+        manager.moveRewriteRules(from: IndexSet(integer: 2), to: 0)
+        #expect(manager.rewriteRules.map(\.name) == ["c.com", "a.com", "b.com"])
+    }
+
     @Test("Adding a rewrite rule with no actions is rejected")
     @MainActor
     func rejectsRuleWithNoActions() {

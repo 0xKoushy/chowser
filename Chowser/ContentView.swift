@@ -342,7 +342,7 @@ struct ContentView: View {
 
     // MARK: - Network Privacy Upgrade Notice
 
-    /// One-time notice (dual surface with Settings > Behavior) that shortlink resolution
+    /// One-time notice (dual surface with Settings > Privacy) that shortlink resolution
     /// and link-preview fetches are now off by default — a behavior change on upgrade
     /// (docs/adr/0003). Shown once total, on whichever surface the user hits first.
     private var networkPrivacyUpgradeNotice: some View {
@@ -351,7 +351,7 @@ struct ContentView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.blue)
 
-            Text("Chowser no longer resolves shortlinks or fetches previews automatically. Turn it back on in Settings > Behavior.")
+            Text("Chowser no longer resolves shortlinks or fetches previews automatically. Turn it back on in Settings > Privacy.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
