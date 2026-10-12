@@ -25,7 +25,7 @@ enum AppearancePreviewLayout {
 extension SettingsView {
     var appearanceSection: some View {
         SettingsDetailScaffold(
-            title: "Appearance",
+            title: "Picker",
             subtitle: "Customize how the link picker looks. Changes update the pinned preview immediately.",
             systemImage: "paintpalette",
             scrollsContent: false,
