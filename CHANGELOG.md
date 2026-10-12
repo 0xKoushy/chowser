@@ -2,6 +2,17 @@
 
 All notable changes to Chowser are documented here.
 
+## [3.9.13] - 2026-10-12
+
+### Changed
+- **Settings is reorganised.** The sidebar is now Browsers, Rules, Rewrites, Native Apps, Picker, Privacy, General, and Backup & Advanced.
+- **Rewrites work like Rules.** Drag to reorder, edit in a side panel, undo deletes, and test a link from the toolbar. Catalog rewrites stay read-only; duplicate one to make an editable copy.
+- **Native Apps** shows one Allow switch per app, with the technical details behind info buttons.
+- **Privacy** has a single "Look up link details online" switch, plus short-link services, the timeout, and tracking cleanup.
+- **General** leads with whether Chowser is your default browser. "App mode" is now "Show in Dock".
+- **Backup & Advanced** collects Export All / Import, importing from the App Store version, the developer API, Set Up with AI, diagnostics, and reset.
+- The Appearance page is now called Picker; nothing on it changed.
+
 ## [3.9.12] - 2026-10-12
 
 ### Changed
