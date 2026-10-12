@@ -3,6 +3,22 @@
     <channel>
         <title>Chowser</title>
         <item>
+            <title>3.9.10</title>
+            <pubDate>Mon, 12 Oct 2026 10:12:21 +0000</pubDate>
+            <link>https://github.com/bsreeram08/chowser/releases/tag/v3.9.10</link>
+            <sparkle:phasedRolloutInterval>86400</sparkle:phasedRolloutInterval>
+            <sparkle:version>202610121524</sparkle:version>
+            <sparkle:shortVersionString>3.9.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[
+### Changed
+- **Faster to open.** In App mode, Settings appears about 0.3 s sooner, and a link that launches Chowser no longer pulls Settings over your browser. Clicking the Dock icon opens Settings faster too.
+- **The picker no longer jumps.** The link preview fills reserved space instead of growing the window a moment after it opens, and pressing P or R no longer resizes it.
+
+]]></description>
+            <enclosure url="https://github.com/bsreeram08/chowser/releases/download/v3.9.10/Chowser-3.9.10.dmg" length="4368540" type="application/octet-stream" sparkle:edSignature="jKVb7KqB595U+Fz9p6cx+4oXQ0+6JXrSECIOqVc588X0sRcuINQLQksemglDJ6nNL8eTqfq9WU5xM5DHlfYsDg=="/>
+        </item>
+        <item>
             <title>3.9.9</title>
             <pubDate>Fri, 09 Oct 2026 14:08:48 +0000</pubDate>
             <link>https://github.com/bsreeram08/chowser/releases/tag/v3.9.9</link>
@@ -41,6 +57,6 @@
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: D+zRYOhAXilWuJtp0m3AZQ2lIUwza+Qlz8HQKyFXx2LE3IZbx2MbUoI6dshqy8FgRVHWfJRsdrqtrP4o6PHLCg==
-length: 3042
+edSignature: q9sJv90DU7DGtJUQyvCmVhNkNwGeoM1t3mrOkE9yzSc64o080ar8GIVdTxP+0CycRoSg/4VDdgjD2RBHlhKQDg==
+length: 4283
 -->
