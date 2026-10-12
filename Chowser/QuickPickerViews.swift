@@ -388,7 +388,6 @@ struct RadialPickerView: View {
                 .position(center)
                 .allowsHitTesting(false)
         }
-        .animation(PickerMotion.occasional(reduceMotion: reduceMotion), value: selectionIndex)
     }
 
     private func selectionConnector(to target: CGPoint) -> Path {

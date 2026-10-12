@@ -104,7 +104,7 @@ struct PickerPanelSurfaceModifier: ViewModifier {
             content
                 .background(veil)               // colored veil, directly behind content
                 .background(.ultraThinMaterial) // glass blur, behind the veil
-                .clipShape(.rect(cornerRadius: radius))
+                .clipShape(.rect(cornerRadius: radius, style: .continuous))
                 .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
                 .padding(1)
                 .overlay(
@@ -114,7 +114,7 @@ struct PickerPanelSurfaceModifier: ViewModifier {
         } else if reduceTransparency || contrast == .increased {
             content
                 .background(Color(nsColor: .windowBackgroundColor))
-                .clipShape(.rect(cornerRadius: PickerGlassStyle.panelCornerRadius))
+                .clipShape(.rect(cornerRadius: PickerGlassStyle.panelCornerRadius, style: .continuous))
                 .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
                 .padding(1)
                 .overlay(
@@ -134,7 +134,7 @@ struct PickerPanelSurfaceModifier: ViewModifier {
         } else {
             content
                 .background(.ultraThinMaterial)
-                .clipShape(.rect(cornerRadius: PickerGlassStyle.panelCornerRadius))
+                .clipShape(.rect(cornerRadius: PickerGlassStyle.panelCornerRadius, style: .continuous))
                 .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
                 .padding(1)
                 .overlay(

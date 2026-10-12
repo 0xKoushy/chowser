@@ -7,7 +7,7 @@ struct AppModeTransitionTests {
     func reopenSuppression() {
         #expect(!AppDelegate.shouldScheduleDeferredReopen(
             hasVisibleWindows: false,
-            secondsSinceLastURLOpen: 0.1
+            secondsSinceLastURLOpen: 0.05
         ))
         #expect(!AppDelegate.shouldScheduleDeferredReopen(
             hasVisibleWindows: true,

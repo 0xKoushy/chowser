@@ -2,6 +2,12 @@
 
 All notable changes to Chowser are documented here.
 
+## [3.9.10] - 2026-10-12
+
+### Changed
+- **Faster to open.** In App mode, Settings appears about 0.3 s sooner, and a link that launches Chowser no longer pulls Settings over your browser. Clicking the Dock icon opens Settings faster too.
+- **The picker no longer jumps.** The link preview fills reserved space instead of growing the window a moment after it opens, and pressing P or R no longer resizes it.
+
 ## [3.9.9] - 2026-10-09
 
 ### Added
