@@ -3,6 +3,30 @@
     <channel>
         <title>Chowser</title>
         <item>
+            <title>3.9.11</title>
+            <pubDate>Mon, 12 Oct 2026 10:40:36 +0000</pubDate>
+            <link>https://github.com/bsreeram08/chowser/releases/tag/v3.9.11</link>
+            <sparkle:phasedRolloutInterval>86400</sparkle:phasedRolloutInterval>
+            <sparkle:version>202610121603</sparkle:version>
+            <sparkle:shortVersionString>3.9.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[
+### Added
+- **Set Up with AI is one click away.** It's in the menu bar menu and on the Rules page in Settings: Chowser starts its local-only API, copies a setup prompt to your clipboard, and tells you where to paste it.
+
+### Changed
+- **First launch is one screen.** Make Chowser your default browser or skip it. Your installed browsers and profiles are added automatically (your current default browser gets shortcut 1), and settings from the App Store version can be brought over in the same step. New installs start in menu bar mode.
+- **The menu bar menu leads with "Make Chowser Your Default Browser…"** until Chowser is the default.
+- **The picker no longer draws a box around the first browser** every time it opens. Selection appears as a soft highlight once you hover or use the arrow keys; Return still opens the first browser.
+- **A short shortcut hint** appears in the picker for the first few opens.
+
+### Fixed
+- **The preview backdrop switcher in Settings → Appearance is no longer cut off.**
+
+]]></description>
+            <enclosure url="https://github.com/bsreeram08/chowser/releases/download/v3.9.11/Chowser-3.9.11.dmg" length="4305065" type="application/octet-stream" sparkle:edSignature="thATKKjeyPYkCG4RU6pyPSSKXnbgjyJJagbWZ0YM877rkRiaHL7GifYpJPgrwQNzNZioBja1wTLwO1z3VCXHDg=="/>
+        </item>
+        <item>
             <title>3.9.10</title>
             <pubDate>Mon, 12 Oct 2026 10:12:21 +0000</pubDate>
             <link>https://github.com/bsreeram08/chowser/releases/tag/v3.9.10</link>
@@ -57,6 +81,6 @@
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: q9sJv90DU7DGtJUQyvCmVhNkNwGeoM1t3mrOkE9yzSc64o080ar8GIVdTxP+0CycRoSg/4VDdgjD2RBHlhKQDg==
-length: 4283
+edSignature: g5f5tu+cYH+F0Cce9upynkyuBJSsqgIYnBvqcKQl6sKLoy9eHUmtktoX3BWJ9Egdpyu83/BOjzYhGW9M7KpwDw==
+length: 6155
 -->
