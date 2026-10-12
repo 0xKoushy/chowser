@@ -106,6 +106,9 @@ jobs:
 
       - name: Run unit tests
         run: |
+          # A stale SwiftPM artifact cache on the runner made v3.9.12 fail with
+          # "…Sparkle-for-Swift-Package-Manager.zip already exists in file system".
+          rm -rf ~/Library/Caches/org.swift.swiftpm/artifacts
           xcodebuild test \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
