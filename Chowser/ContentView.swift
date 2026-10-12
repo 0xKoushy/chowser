@@ -229,7 +229,6 @@ struct ContentView: View {
                         .accessibilityIdentifier("picker.lastOpenedBrowser")
                 }
             }
-            .animation(PickerMotion.occasional(reduceMotion: reduceMotion), value: showingConfigureRule)
             .onAppear(perform: handleAppear)
             .onDisappear(perform: handleDisappear)
             .onChange(of: browserManager.currentURL) {
@@ -388,12 +387,19 @@ struct ContentView: View {
                         .accessibilityIdentifier("picker.urlEditField")
                 } else {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(destination.host)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .accessibilityIdentifier("picker.urlDisplay")
+                        // The private badge sits on the host line so pressing P never
+                        // changes the panel's height (the window would jump).
+                        HStack(spacing: 6) {
+                            Text(destination.host)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .accessibilityIdentifier("picker.urlDisplay")
+                            if effectivePrivateMode {
+                                privateModeIndicator.fixedSize()
+                            }
+                        }
 
                         if let path = destination.path {
                             Text(path)
@@ -487,10 +493,6 @@ struct ContentView: View {
                 }
             }
 
-            if effectivePrivateMode {
-                privateModeIndicator
-            }
-
             if let urlEditError {
                 Label(urlEditError, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 10, weight: .medium))
@@ -511,7 +513,7 @@ struct ContentView: View {
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(.primary)
             .padding(.horizontal, 7)
-            .padding(.vertical, 5)
+            .padding(.vertical, 1)
             .background(
                 Capsule(style: .continuous)
                     .fill(Color.purple.opacity(0.14))
@@ -817,32 +819,68 @@ struct ContentView: View {
         }
     }
 
+    /// Fixed-height slot: the panel is sized once when it appears, so a preview that
+    /// arrives later must fill reserved space instead of growing the window.
+    private static let previewSlotHeight: CGFloat = 60
+
     @ViewBuilder
     private var previewRow: some View {
-        if let meta = isPreview ? previewMetadata : previewState.metadata {
-            HStack(alignment: .top, spacing: 10) {
-                previewThumbnail(meta)
-                VStack(alignment: .leading, spacing: 2) {
-                    if let title = meta.title {
-                        Text(title)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                    }
-                    if let description = meta.description {
-                        Text(description)
-                            .font(.system(size: 10))
+        if isPreview {
+            if let meta = previewMetadata { previewContent(meta).frame(height: Self.previewSlotHeight).pickerInlineCard() }
+        } else if let placeholder = previewPlaceholderText {
+            Group {
+                if let meta = previewState.metadata {
+                    previewContent(meta)
+                        .transition(.opacity)
+                } else {
+                    HStack(spacing: 10) {
+                        faviconFallback.frame(width: 22, height: 22)
+                        Text(placeholder)
+                            .font(.system(size: 11))
                             .foregroundStyle(.secondary)
-                            .lineLimit(2)
+                        Spacer(minLength: 0)
                     }
+                    .padding(8)
+                    .transition(.opacity)
                 }
-                Spacer(minLength: 0)
             }
-            .padding(8)
+            .frame(height: Self.previewSlotHeight)
             .pickerInlineCard()
-            .transition(.opacity)
             .accessibilityIdentifier("picker.linkPreview")
         }
+    }
+
+    /// nil = no slot (preview not applicable to this link/layout).
+    private var previewPlaceholderText: String? {
+        switch previewState {
+        case .idle: return nil
+        case .loading, .loaded: return "Loading preview…"
+        case .networkLookupsDisabled: return "Turn on network lookups to see previews"
+        case .skippedSingleUse: return "No preview for one-time links"
+        case .unavailable, .noPreview: return "No preview available"
+        }
+    }
+
+    private func previewContent(_ meta: LinkMetadata) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            previewThumbnail(meta)
+            VStack(alignment: .leading, spacing: 2) {
+                if let title = meta.title {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+                if let description = meta.description {
+                    Text(description)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
     }
 
     @ViewBuilder
@@ -922,7 +960,7 @@ struct ContentView: View {
                 if reduceMotion {
                     applyResult()
                 } else {
-                    withAnimation(.easeOut(duration: 0.2), applyResult)
+                    withAnimation(.easeOut(duration: 0.15), applyResult)
                 }
             }
         }
@@ -1501,6 +1539,17 @@ struct ContentView: View {
     // MARK: - Dismiss
 
     private func dismissPicker() {
+        // Reset without animation: the panel is ordered out right after, and a transition
+        // left running off-screen could show a stale frame on a quick reopen.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { resetPickerState() }
+        for window in NSApp.windows where window.isVisible && window.identifier?.rawValue == "picker" {
+            window.orderOut(nil)
+        }
+    }
+
+    private func resetPickerState() {
         privateMode = false
         browserManager.currentURLPrivateModeRequested = false
         showingConfigureRule = false
@@ -1516,9 +1565,6 @@ struct ContentView: View {
         browserManager.currentRewriteTrace = []
         phoneHandoffAdapter.stop()
         browserManager.currentURL = nil
-        for window in NSApp.windows where window.isVisible && window.identifier?.rawValue == "picker" {
-            window.orderOut(nil)
-        }
     }
 
     // MARK: - Browser Action

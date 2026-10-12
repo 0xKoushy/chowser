@@ -244,7 +244,7 @@ struct DefaultBrowserStepView: View {
             .padding(.horizontal, 40)
             .padding(.bottom, 40)
         }
-        .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()) { _ in
             if hasClickedSetDefault && BrowserManager.isDefaultBrowser() {
                 nextAction()
             }

@@ -38,7 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var pendingReopenWorkItem: DispatchWorkItem?
     private var lastURLOpenUptime = -TimeInterval.infinity
 
-    private static let deferredReopenDelay: TimeInterval = 0.2
+    private static let deferredReopenDelay: TimeInterval = 0.1
 
     private(set) static weak var shared: AppDelegate?
 
@@ -105,7 +105,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 // Once onboarding is complete, setup the rest of the application
                 self.setupApplicationState()
                 // Auto-open Settings so new users know where to go
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                // Next runloop turn only: the onboarding window is already gone.
+                DispatchQueue.main.async {
                     self.openSettings()
                 }
             }
@@ -157,9 +158,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             // App Mode has no status item to click, so there's no picker-adjacent affordance
             // to discover Settings from — show it directly, same as the new-user first-launch
             // auto-open below.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            // A link that launched Chowser cancels this (application(_:open:) calls
+            // cancelPendingReopen), so a link click never pulls Settings over the browser.
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.pendingReopenWorkItem = nil
+                guard self.lastURLOpenUptime.isInfinite,
+                      !NSApp.windows.contains(where: \.isVisible) else { return }
                 self.openSettings()
             }
+            pendingReopenWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.deferredReopenDelay, execute: workItem)
         }
     }
 
