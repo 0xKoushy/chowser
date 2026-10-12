@@ -2,6 +2,20 @@
 
 All notable changes to Chowser are documented here.
 
+## [3.9.11] - 2026-10-12
+
+### Added
+- **Set Up with AI is one click away.** It's in the menu bar menu and on the Rules page in Settings: Chowser starts its local-only API, copies a setup prompt to your clipboard, and tells you where to paste it.
+
+### Changed
+- **First launch is one screen.** Make Chowser your default browser or skip it. Your installed browsers and profiles are added automatically (your current default browser gets shortcut 1), and settings from the App Store version can be brought over in the same step. New installs start in menu bar mode.
+- **The menu bar menu leads with "Make Chowser Your Default Browser…"** until Chowser is the default.
+- **The picker no longer draws a box around the first browser** every time it opens. Selection appears as a soft highlight once you hover or use the arrow keys; Return still opens the first browser.
+- **A short shortcut hint** appears in the picker for the first few opens.
+
+### Fixed
+- **The preview backdrop switcher in Settings → Appearance is no longer cut off.**
+
 ## [3.9.10] - 2026-10-12
 
 ### Changed
