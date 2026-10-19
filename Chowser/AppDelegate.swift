@@ -429,6 +429,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             if willAwaitShortlink {
                 manager.currentRewriteTrace = rewriteResult.steps
                 manager.pickerSourceAppBundleId = sourceAppBundleId
+                manager.pickerPrivateIntent = incomingIntent.privateModeRequested
                 manager.currentURL = rewrittenURL
                 manager.isResolvingIncomingURL = true
                 showPicker()
@@ -479,7 +480,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                         profile: browser.profile,
                         usePrivateMode: usePrivateMode,
                         sourceApp: sourceAppBundleId,
-                        viaRule: rule?.name
+                        viaRule: rule?.name,
+                        privateIntent: incomingIntent.privateModeRequested
                     )
                     if willAwaitShortlink { self.closePicker() }
                     return
@@ -503,6 +505,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                     // The handler changed between resolution and open. Keep the original
                     // HTTPS URL in the picker instead of trusting the new handler.
                     manager.pickerSourceAppBundleId = sourceAppBundleId
+                    manager.pickerPrivateIntent = incomingIntent.privateModeRequested
                     showPicker()
 
                 case .picker:
@@ -510,6 +513,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                     manager.currentURLPrivateModeRequested = BrowserManager.supportsApplicationLaunchArgumentsInCurrentBuild
                         && incomingIntent.privateModeRequested
                     manager.pickerSourceAppBundleId = sourceAppBundleId
+                    manager.pickerPrivateIntent = incomingIntent.privateModeRequested
                     showPicker()
                 }
             }

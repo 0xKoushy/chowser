@@ -1573,7 +1573,8 @@ struct ContentView: View {
     /// - Parameter recordDismissal: false when the link was just opened, so it isn't also
     ///   logged as dismissed.
     private func dismissPicker(recordDismissal: Bool = true) {
-        if recordDismissal, !isPreview, !privateMode, let url = browserManager.currentURL {
+        if recordDismissal, !isPreview, !privateMode, !browserManager.pickerPrivateIntent,
+           let url = browserManager.currentURL {
             LinkHistory.shared.record(url: url, source: browserManager.pickerSourceAppBundleId, outcome: .dismissed)
         }
         // Reset without animation: the panel is ordered out right after, and a transition
@@ -1603,6 +1604,7 @@ struct ContentView: View {
         phoneHandoffAdapter.stop()
         browserManager.currentURL = nil
         browserManager.pickerSourceAppBundleId = nil
+        browserManager.pickerPrivateIntent = false
     }
 
     // MARK: - Browser Action
@@ -1611,13 +1613,15 @@ struct ContentView: View {
         guard let url = browserManager.currentURL else { return }
         let effectiveUsePrivateMode = supportsPrivateLaunchMode && usePrivateMode
         let sourceApp = browserManager.pickerSourceAppBundleId
+        let privateIntent = browserManager.pickerPrivateIntent
         if !isPreview { dismissPicker(recordDismissal: false) }
         browserManager.open(
             url: url,
             withBrowserBundleID: browser.bundleId,
             profile: browser.profile,
             usePrivateMode: effectiveUsePrivateMode,
-            sourceApp: sourceApp
+            sourceApp: sourceApp,
+            privateIntent: privateIntent
         )
     }
 

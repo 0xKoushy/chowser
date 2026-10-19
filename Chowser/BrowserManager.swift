@@ -450,6 +450,9 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     /// Source app of the link currently in the picker. `currentSourceAppBundleId` is cleared
     /// after routing, so the picker keeps its own copy for history entries.
     var pickerSourceAppBundleId: String? = nil
+    /// The link in the picker was requested in private mode. Kept even where the build can't
+    /// launch privately, so its history entry is skipped either way.
+    var pickerPrivateIntent = false
     var lastOpenedBrowserBundleIDForTesting: String?
     @ObservationIgnored private var pendingPrivateModeURL: URL?
 
@@ -2435,14 +2438,15 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         profile: String? = nil,
         usePrivateMode: Bool = false,
         sourceApp: String? = nil,
-        viaRule: String? = nil
+        viaRule: String? = nil,
+        privateIntent: Bool = false
     ) {
         func recordHistory() {
             LinkHistory.shared.record(
                 url: url,
                 source: sourceApp,
                 outcome: .browser(bundleID: bundleId, profile: profile, viaRule: viaRule),
-                isPrivate: usePrivateMode
+                isPrivate: usePrivateMode || privateIntent
             )
         }
 
