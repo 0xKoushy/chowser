@@ -107,6 +107,19 @@ enum AppEnvironment {
         return nil
     }
 
+    /// Redirects Link History away from the real Application Support file during UI and
+    /// unit tests. Nil in a normal launch (LinkHistory then uses its default location).
+    nonisolated static var linkHistoryFileURLOverride: URL? {
+        let temp = FileManager.default.temporaryDirectory
+        if isUITesting {
+            return temp.appendingPathComponent("chowser-ui-tests-link-history.json")
+        }
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return temp.appendingPathComponent("chowser-unit-tests-\(ProcessInfo.processInfo.processIdentifier)-link-history.json")
+        }
+        return nil
+    }
+
     nonisolated static func makeDefaultStore() -> UserDefaults {
         guard let suiteName = defaultsSuiteName else {
             return .standard

@@ -1876,48 +1876,17 @@ struct BrowserManagerTests {
         // to be truly useful, but we can verify the behavior if it exists.
     }
 
-    // MARK: - Recent URLs
+    // MARK: - Legacy recent URLs
 
-    @Test("Recent URLs are capped at 5 and persist")
+    @Test("The removed recentURLs defaults key is deleted on launch")
     @MainActor
-    func recentURLsTracking() {
+    func legacyRecentURLsKeyIsRemoved() {
         let defaults = makeTestDefaults()
-        let manager = BrowserManager(defaults: defaults)
+        defaults.set(Data("[]".utf8), forKey: "recentURLs")
 
-        for i in 1...6 {
-            manager.addRecentURL(URL(string: "https://example\(i).com")!)
-        }
+        _ = BrowserManager(defaults: defaults)
 
-        #expect(manager.recentURLs.count == 5)
-        // Most recent should be at index 0 (example6)
-        #expect(manager.recentURLs[0].absoluteString == "https://example6.com")
-        // Overflows should push out the oldest, so example1 shouldn't be there.
-        #expect(!manager.recentURLs.contains(where: { $0.absoluteString == "https://example1.com" }))
-
-        let manager2 = BrowserManager(defaults: defaults)
-        #expect(manager2.recentURLs.count == 5)
-        #expect(manager2.recentURLs[0].absoluteString == "https://example6.com")
-    }
-
-    @Test("Adding a duplicate URL moves it to the top instead of adding twice")
-    @MainActor
-    func recentURLsDuplicates() {
-        let defaults = makeTestDefaults()
-        let manager = BrowserManager(defaults: defaults)
-
-        manager.addRecentURL(URL(string: "https://example1.com")!)
-        manager.addRecentURL(URL(string: "https://example2.com")!)
-        
-        #expect(manager.recentURLs[0].absoluteString == "https://example2.com")
-        #expect(manager.recentURLs.count == 2)
-        
-        // Add example1 again
-        manager.addRecentURL(URL(string: "https://example1.com")!)
-        
-        // Should move to top, count shouldn't increase
-        #expect(manager.recentURLs[0].absoluteString == "https://example1.com")
-        #expect(manager.recentURLs[1].absoluteString == "https://example2.com")
-        #expect(manager.recentURLs.count == 2)
+        #expect(defaults.object(forKey: "recentURLs") == nil)
     }
 
     // MARK: - URL Cleaning

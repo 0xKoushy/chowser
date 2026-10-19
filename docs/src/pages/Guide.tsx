@@ -81,6 +81,12 @@ const STEPS = [
       "From the picker, AirDrop a link, show a QR code styled in your picker's colors, or copy it. Handoff also reaches nearby Apple devices so you can continue on iPhone.",
   },
   {
+    icon: Eye,
+    title: "Recover a dismissed link",
+    body:
+      "Chowser keeps a local history of the links it handles, including ones you dismissed from the picker. Open Settings → Activity, or use Recent Links in the menu bar, to open one again. History stays on your Mac; choose Stats only or Off in Settings → Privacy.",
+  },
+  {
     icon: Bot,
     title: "Turn on the MCP server",
     body:

@@ -102,12 +102,29 @@ final class ChowserUITests: XCTestCase {
         ], suiteLabel: suiteLabel)
     }
 
+    /// The app counts launches in its UI-test defaults suite. The UI-test runner is sandboxed,
+    /// so `UserDefaults(suiteName:)` there resolves to the runner's container and never sees
+    /// the unsandboxed app's writes. The runner does have read-only file access, so read the
+    /// app's suite plist directly from the real home directory.
+    private func observedOpenInvocationCount() -> Int {
+        guard let defaultsSuiteName, let passwd = getpwuid(getuid()) else { return 0 }
+        let home = String(cString: passwd.pointee.pw_dir)
+        let plist = URL(fileURLWithPath: home)
+            .appendingPathComponent("Library/Preferences/\(defaultsSuiteName).plist")
+        guard let data = try? Data(contentsOf: plist),
+              let object = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let values = object as? [String: Any] else { return 0 }
+        return (values["uiTestOpenInvocationCount"] as? Int) ?? 0
+    }
+
+    /// Waits for exactly `expectedCount` launches, then lets a late duplicate launch surface
+    /// before confirming the count did not move.
     private func waitForOpenInvocationCount(_ expectedCount: Int, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            let defaults = UserDefaults(suiteName: defaultsSuiteName)
-            if defaults?.integer(forKey: "uiTestOpenInvocationCount") == expectedCount {
-                return true
+            if observedOpenInvocationCount() == expectedCount {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+                return observedOpenInvocationCount() == expectedCount
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         } while Date() < deadline
@@ -187,7 +204,9 @@ final class ChowserUITests: XCTestCase {
         XCTAssertTrue(controls.waitForExistence(timeout: 5))
         XCTAssertTrue(layoutPicker.waitForExistence(timeout: 5))
         XCTAssertTrue(preview.isHittable)
-        XCTAssertTrue(layoutPicker.isHittable)
+        // A segmented control's own group element is never the topmost hit target (its
+        // segments are), so assert a segment is reachable instead.
+        XCTAssertTrue(layoutPicker.radioButtons["Icons"].isHittable)
         XCTAssertLessThanOrEqual(preview.frame.maxY, controls.frame.minY + 2, "The compact preview should be pinned above the independently scrolling controls.")
 
         let accentLabel = app.staticTexts["Accent Color"]
@@ -483,6 +502,43 @@ final class ChowserUITests: XCTestCase {
         ui.assertSettingsVisible()
     }
 
+    func testCommandClickSelectsTwoBrowsersAndRemovingThemAsksFirst() throws {
+        let ui = ChowserAppDriver(app: app)
+
+        ui.openSettings()
+        ui.assertSettingsVisible()
+
+        while ui.browserRows.count < 3 {
+            let before = ui.browserRows.count
+            ui.openAddBrowserSheet()
+            ui.addFirstBrowserOption()
+            if ui.browserRows.count == before { break }
+        }
+        let startCount = ui.browserRows.count
+        try XCTSkipIf(startCount < 3, "Need at least three browsers to remove two and keep one.")
+
+        ui.browserRows.element(boundBy: 0).click()
+        XCUIElement.perform(withKeyModifiers: .command) {
+            ui.browserRows.element(boundBy: 1).click()
+        }
+
+        let summary = app.descendants(matching: .any).matching(identifier: "settings.browsers.multiSelectSummary").firstMatch
+        XCTAssertTrue(summary.waitForExistence(timeout: 5), "Selecting two browsers should show the multi-select summary.")
+
+        ui.browserRemoveButton.click()
+
+        let confirm = app.buttons["settings.confirmDelete.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Removing should ask for confirmation first.")
+        XCTAssertEqual(ui.browserRows.count, startCount, "Nothing should be removed before confirming.")
+
+        confirm.click()
+
+        let predicate = NSPredicate(format: "count == %d", startCount - 2)
+        let removed = XCTNSPredicateExpectation(predicate: predicate, object: ui.browserRows)
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed, "Both selected browsers should be gone.")
+        ui.assertSettingsVisible()
+    }
+
     func testResetToFreshSetupRestoresFirstLaunchState() throws {
         let ui = ChowserAppDriver(app: app)
 
@@ -511,6 +567,38 @@ final class ChowserUITests: XCTestCase {
         ui.firstPickerBrowserRow.click()
 
         ui.assertBrowserSelectionRecorded()
+    }
+
+    func testDismissedLinkAppearsInActivity() throws {
+        launchClassicPickerFixture(suiteLabel: "activity-dismissed")
+        let ui = ChowserAppDriver(app: app)
+        ui.assertPickerVisible()
+
+        app.typeKey(.escape, modifierFlags: [])
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: ui.pickerRoot)
+        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 5), .completed, "Escape should dismiss the picker.")
+        // Let the debounced history write land before relaunching.
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+
+        // Relaunch without ClearData: the history file must survive and show the dismissal.
+        launchTestApp(arguments: [
+            "-UITesting",
+            "-UITesting_MockInstalledBrowsers",
+            "-UITesting_DisableExternalOpen",
+            "-UITesting_OpenSettings",
+        ], suiteLabel: "activity-dismissed-settings")
+        ui.openSettings()
+        ui.clickSidebarItem(identifier: "settings.sidebar.activity")
+
+        let dismissedRow = app.descendants(matching: .any)
+            .matching(identifier: "settings.activity.row.dismissed")
+            .firstMatch
+        XCTAssertTrue(dismissedRow.waitForExistence(timeout: 5), "Dismissed link should be listed under Activity.")
+
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "activity-page"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func testPickerNumberShortcutSelectsBrowser() throws {
@@ -908,12 +996,13 @@ private struct ChowserAppDriver {
         XCTAssertTrue(rulesTable.waitForExistence(timeout: 5), "Rules table should exist.", file: file, line: line)
         let error = app.descendants(matching: .any).matching(identifier: "settings.rule.hostError").firstMatch
         XCTAssertFalse(error.exists, "The new rule should be valid.", file: file, line: line)
+        // SwiftUI's Table surfaces as an accessibility Outline whose rows are OutlineRows.
         let predicate = NSPredicate(format: "count > 0")
-        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: rulesTable.tableRows)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: rulesTable.outlineRows)
         XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, "Expected at least one routing rule row.", file: file, line: line)
     }
 
-    private func clickSidebarItem(identifier: String) {
+    func clickSidebarItem(identifier: String) {
         let candidates: [XCUIElement] = [
             app.buttons[identifier],
             app.staticTexts[identifier],

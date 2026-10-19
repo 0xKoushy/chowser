@@ -256,6 +256,94 @@ struct RulesEditorTests {
         #expect(manager.routingRules.map(\.hostPattern) == ["a.com", "b.com", "c.com"])
     }
 
+    @Test("Batch delete is one undo step that restores rules at their original indices")
+    func batchDeleteUndoesInOneStep() {
+        let manager = makeManager()
+        let a = addRule(manager, "a.com")
+        let b = addRule(manager, "b.com")
+        let c = addRule(manager, "c.com")
+        let d = addRule(manager, "d.com")
+        let e = addRule(manager, "e.com")
+        let original = manager.routingRules
+        let model = RulesEditorModel(manager: manager)
+        model.selectedIDs = [b.id, d.id]
+        let undoManager = UndoManager()
+        undoManager.groupsByEvent = false
+
+        undoManager.beginUndoGrouping()
+        model.delete(ids: [b.id, d.id], undoManager: undoManager)
+        undoManager.endUndoGrouping()
+
+        #expect(manager.routingRules.map(\.id) == [a.id, c.id, e.id])
+        #expect(undoManager.undoActionName == "Delete Rules")
+        // The row that slid into the first deleted row's place is selected.
+        #expect(model.selectedIDs == [c.id])
+
+        undoManager.undo()
+        #expect(manager.routingRules == original)
+        #expect(!undoManager.canUndo)
+
+        undoManager.redo()
+        #expect(manager.routingRules.map(\.id) == [a.id, c.id, e.id])
+    }
+
+    @Test("Going from one selected rule to several still settles the rule that left")
+    func multiSelectionKeepsDraftSemantics() {
+        let manager = makeManager()
+        let a = addRule(manager, "a.com")
+        let b = addRule(manager, "b.com")
+        let model = RulesEditorModel(manager: manager)
+        model.selection = a.id
+
+        // An invalid edit stays a draft while the rule remains selected.
+        model.update(a.id) { $0.hostPattern = "git..hub" }
+        model.selectedIDs = [a.id, b.id]
+        #expect(model.selection == nil)
+        #expect(model.hasUnsavedInvalidEdits(a.id))
+
+        // A valid edit is folded into the store once its row leaves the selection.
+        model.update(b.id) { $0.hostPattern = "bee.com" }
+        #expect(model.drafts[b.id] != nil)
+        model.selectedIDs = [a.id]
+        #expect(model.drafts[b.id] == nil)
+        #expect(manager.routingRules.first { $0.id == b.id }?.hostPattern == "bee.com")
+        #expect(model.selection == a.id)
+    }
+
+    @Test("An untouched new rule is discarded when a multi-selection no longer includes it")
+    func multiSelectionDiscardsBlankNewRule() {
+        let manager = makeManager()
+        let a = addRule(manager, "a.com")
+        let b = addRule(manager, "b.com")
+        let model = RulesEditorModel(manager: manager)
+        model.selection = a.id
+        model.addRule()
+        let newID = model.selection!
+        #expect(model.pendingNewRule != nil)
+
+        model.selectedIDs = [a.id, b.id]
+        #expect(model.pendingNewRule == nil)
+        #expect(!model.rows.contains { $0.id == newID })
+    }
+
+    @Test("Deleting only an unsaved new rule discards it without touching the store")
+    func deleteUnsavedNewRule() {
+        let manager = makeManager()
+        let a = addRule(manager, "a.com")
+        let model = RulesEditorModel(manager: manager)
+        model.selection = a.id
+        model.addRule()
+        let newID = model.selection!
+        let undoManager = UndoManager()
+
+        model.delete(ids: [newID], undoManager: undoManager)
+
+        #expect(model.pendingNewRule == nil)
+        #expect(manager.routingRules.map(\.id) == [a.id])
+        #expect(!undoManager.canUndo)
+        #expect(model.selection == a.id)
+    }
+
     @Test("Moving by table position reorders the store")
     func moveRows() {
         let manager = makeManager()

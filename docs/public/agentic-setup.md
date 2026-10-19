@@ -71,6 +71,8 @@ Profiles and private windows are driven by per-browser launch arguments. For eac
 3. **Sync Browsers**: Call `POST /browsers` for each profile found, including `profile`, `customArguments`, and `privateArguments`.
 4. **Sync Rules**: Call `POST /rules` to set routing. Example: open `*.github.com` in `Chrome - Work`.
 5. **App-level settings**: `GET`/`POST /settings` covers the entire Settings app — App Mode, fallback routing, network privacy, launch-at-login, hidden apps, and every picker appearance/behavior preference. If I ask conversationally for something like "turn on dark mode for the picker" or "stop launching at login," call `GET /settings` first to see current values, then `POST` only the field(s) that changed. Don't touch settings I didn't ask about.
+   - **`activityLevel`** (`"full"` / `"statsOnly"` / `"off"`) controls Chowser's local link history. **Never lower it unless I explicitly ask:** lowering it permanently deletes my stored link history and domain click counts, with no confirmation over the API. Link history itself is not exposed through the API.
+   - `open "chowser://reopen"` re-runs my most recent dismissed link through routing (the picker usually shows again). Only use it when I ask, and note it needs `activityLevel` `"full"`.
 
 **CAVEATS**:
 - **App Store build**: macOS sandboxing may strip launch arguments, so profiles/args are stored but may not apply at launch (`launchArgumentsSupported:false` in responses). They apply reliably in the direct-download build.

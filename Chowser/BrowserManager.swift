@@ -236,10 +236,14 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             "com.colliderli.iina",
             "org.videolan.vlc",
         ]
-        static let recentURLsKey = "recentURLs"
+        /// Removed feature; the key is only cleared so old data doesn't linger.
+        static let legacyRecentURLsKey = "recentURLs"
+        static let activityLevelKey = "activityLevel"
+        static let showRecentLinksInMenuKey = "showRecentLinksInMenu"
+        static let showsActivityUpgradeNoticeKey = "showsActivityUpgradeNotice"
     }
 
-    static let shared = BrowserManager(defaults: makeDefaultStore(), immediateWrite: false)
+    static let shared = BrowserManager(defaults: makeDefaultStore(), immediateWrite: false, ownsActivityStores: true)
 
     struct ImportSummary: Equatable {
         var added: Int = 0
@@ -444,6 +448,19 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     var currentURL: URL?
     var currentURLPrivateModeRequested = false
     var currentSourceAppBundleId: String? = nil
+    /// Source app of the link currently in the picker. `currentSourceAppBundleId` is cleared
+    /// after routing, so the picker keeps its own copy for history entries.
+    var pickerSourceAppBundleId: String? = nil
+    /// The link in the picker was requested in private mode. Kept even where the build can't
+    /// launch privately, so its history entry is skipped either way.
+    var pickerPrivateIntent = false
+
+    /// Records the link currently waiting in the picker as dismissed, because a newer
+    /// incoming link is about to take its place.
+    func recordReplacedPickerLink() {
+        guard let url = currentURL, !pickerPrivateIntent else { return }
+        LinkHistory.shared.record(url: url, source: pickerSourceAppBundleId, outcome: .dismissed)
+    }
     var lastOpenedBrowserBundleIDForTesting: String?
     @ObservationIgnored private var pendingPrivateModeURL: URL?
 
@@ -549,11 +566,33 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
     }
 
-    var recentURLs: [URL] = [] {
+    /// How much link history and usage data Chowser keeps. Lowering it deletes the data the
+    /// new level no longer allows (see `LinkHistory.setLevel`).
+    var activityLevel: ActivityLevel = .full {
         didSet {
-            scheduleSaveRecentURLs()
+            defaults.set(activityLevel.rawValue, forKey: Constants.activityLevelKey)
+            if activityLevel == .full { showsActivityUpgradeNotice = false }
+            applyActivityLevel()
         }
     }
+
+    /// Installs that predate Link History start at "Stats only" and get a one-time tip about
+    /// Full history, so nobody's full URLs are saved without them choosing it.
+    var showsActivityUpgradeNotice: Bool = false {
+        didSet {
+            defaults.set(showsActivityUpgradeNotice, forKey: Constants.showsActivityUpgradeNoticeKey)
+        }
+    }
+
+    /// Whether the menu bar menu lists the last links inline (toggled from the menu itself).
+    var showRecentLinksInMenu: Bool = true {
+        didSet {
+            defaults.set(showRecentLinksInMenu, forKey: Constants.showRecentLinksInMenuKey)
+        }
+    }
+
+    /// One-shot request for the Settings window to show a section (consumed by `SettingsView`).
+    var requestedSettingsSection: SettingsView.SettingsSection?
 
     struct TemporaryRoute {
         let browserBundleId: String
@@ -578,10 +617,19 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     @ObservationIgnored private var pendingBrowsersSave: DispatchWorkItem?
     @ObservationIgnored private var pendingRulesSave: DispatchWorkItem?
     @ObservationIgnored private var pendingRewritesSave: DispatchWorkItem?
-    @ObservationIgnored private var pendingRecentURLsSave: DispatchWorkItem?
     @ObservationIgnored private var temporaryRouteExpirationTimer: Timer?
 
-    init(defaults: UserDefaults = AppEnvironment.makeDefaultStore(), defaultsKey: String = "configuredBrowsers", immediateWrite: Bool = true) {
+    /// Only the app's shared manager drives `LinkHistory.shared` and `DomainFrequencyTracker.shared`;
+    /// other instances (tests) must not wipe or re-level them.
+    @ObservationIgnored private let ownsActivityStores: Bool
+
+    init(
+        defaults: UserDefaults = AppEnvironment.makeDefaultStore(),
+        defaultsKey: String = "configuredBrowsers",
+        immediateWrite: Bool = true,
+        ownsActivityStores: Bool = false
+    ) {
+        self.ownsActivityStores = ownsActivityStores
         self.defaults = defaults
         self.defaultsKey = defaultsKey
         self.immediateWrite = immediateWrite
@@ -589,14 +637,20 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         if AppEnvironment.shouldClearDataOnLaunch {
             clearPersistedBrowserList()
             clearPersistedRoutingRules()
-            clearPersistedRecentURLs()
+            defaults.removeObject(forKey: Constants.activityLevelKey)
+            defaults.removeObject(forKey: Constants.showRecentLinksInMenuKey)
+            defaults.removeObject(forKey: Constants.showsActivityUpgradeNoticeKey)
         }
+        // Read before load(), which may persist a default browser list for a new install.
+        let predatesActivityLevel = defaults.object(forKey: Constants.activityLevelKey) == nil
+            && (OnboardingManager.hasCompletedOnboarding(in: defaults) || defaults.object(forKey: defaultsKey) != nil)
+        clearLegacyRecentURLs()
 
         load()
         loadRoutingRules()
         loadRewriteRules()
         loadHiddenBundleIDs()
-        loadRecentURLs()
+        loadActivityLevel(predatesActivityLevel: predatesActivityLevel)
         loadPickerPreferences()
         if let fixture = AppEnvironment.pickerFixture {
             configuredBrowsers = fixture.browsers
@@ -756,12 +810,6 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
     }
 
-    func saveRecentURLs() {
-        if let encoded = try? JSONEncoder().encode(recentURLs) {
-            defaults.set(encoded, forKey: Constants.recentURLsKey)
-        }
-    }
-
     private func scheduleSaveBrowsers() {
         guard !immediateWrite else { save(); return }
         pendingBrowsersSave?.cancel()
@@ -792,16 +840,6 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
     }
 
-    private func scheduleSaveRecentURLs() {
-        guard !immediateWrite else { saveRecentURLs(); return }
-        pendingRecentURLsSave?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            Task { @MainActor in self?.saveRecentURLs() }
-        }
-        pendingRecentURLsSave = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
-    }
-
     func flushPendingSaves() {
         if pendingBrowsersSave != nil {
             pendingBrowsersSave?.cancel()
@@ -818,11 +856,7 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             pendingRewritesSave = nil
             saveRewriteRules()
         }
-        if pendingRecentURLsSave != nil {
-            pendingRecentURLsSave?.cancel()
-            pendingRecentURLsSave = nil
-            saveRecentURLs()
-        }
+        LinkHistory.shared.flushPendingSave()
     }
 
     private func scheduleTemporaryRouteExpirationTimer() {
@@ -875,12 +909,23 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
     }
 
-    func loadRecentURLs() {
-        if let data = defaults.data(forKey: Constants.recentURLsKey),
-           let decoded = try? JSONDecoder().decode([URL].self, from: data) {
-            recentURLs = decoded
+    private func loadActivityLevel(predatesActivityLevel: Bool) {
+        if predatesActivityLevel {
+            activityLevel = .statsOnly
+            showsActivityUpgradeNotice = true
         } else {
-            recentURLs = []
+            activityLevel = ActivityLevel(rawValue: defaults.string(forKey: Constants.activityLevelKey) ?? "") ?? .full
+            showsActivityUpgradeNotice = defaults.bool(forKey: Constants.showsActivityUpgradeNoticeKey)
+        }
+        showRecentLinksInMenu = defaults.object(forKey: Constants.showRecentLinksInMenuKey) as? Bool ?? true
+    }
+
+    private func applyActivityLevel() {
+        guard ownsActivityStores else { return }
+        LinkHistory.shared.setLevel(activityLevel)
+        DomainFrequencyTracker.shared.isRecordingEnabled = activityLevel != .off
+        if activityLevel == .off {
+            DomainFrequencyTracker.shared.clear()
         }
     }
 
@@ -912,11 +957,14 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     func resetToFreshSetup() {
         restoreDefaultBrowserList()
         restoreDefaultRoutingRules()
-        clearPersistedRecentURLs()
-        recentURLs = []
         currentURL = nil
         nativeAppApprovals = [:]
         hasCompletedOnboarding = false
+        activityLevel = .full
+        if ownsActivityStores {
+            LinkHistory.shared.clear()
+            DomainFrequencyTracker.shared.clear()
+        }
 
         if launchAtLogin {
             launchAtLogin = false
@@ -1007,20 +1055,30 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     /// soon as the browser is restored. Redo is registered automatically by the restore.
     @discardableResult
     func removeBrowser(id: UUID, undoManager: UndoManager?) -> RemovedBrowserSnapshot? {
-        guard let index = configuredBrowsers.firstIndex(where: { $0.id == id }) else { return nil }
+        removeBrowsers(ids: [id], undoManager: undoManager).first
+    }
 
-        let snapshot = RemovedBrowserSnapshot(browser: configuredBrowsers[index], index: index)
-        configuredBrowsers.remove(at: index)
+    /// Removes several browsers in one mutation and registers ONE undo step ("Remove
+    /// Browsers", or "Remove Browser" for a single one) that restores all of them at their
+    /// original indices. Returns the removed browsers in list order; unknown IDs are ignored.
+    @discardableResult
+    func removeBrowsers(ids: Set<UUID>, undoManager: UndoManager?) -> [RemovedBrowserSnapshot] {
+        let snapshots = configuredBrowsers.enumerated()
+            .filter { ids.contains($0.element.id) }
+            .map { RemovedBrowserSnapshot(browser: $0.element, index: $0.offset) }
+        guard !snapshots.isEmpty else { return [] }
+
+        configuredBrowsers.removeAll { ids.contains($0.id) }
 
         if let undoManager {
             undoManager.registerUndo(withTarget: self) { manager in
                 MainActor.assumeIsolated {
-                    manager.restoreBrowser(snapshot, undoManager: undoManager)
+                    manager.restoreBrowsers(snapshots, undoManager: undoManager)
                 }
             }
-            undoManager.setActionName("Remove Browser")
+            undoManager.setActionName(snapshots.count == 1 ? "Remove Browser" : "Remove Browsers")
         }
-        return snapshot
+        return snapshots
     }
 
     /// Re-inserts a removed browser at its original index (clamped to the current list).
@@ -1029,29 +1087,41 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     /// profile) has been added again since. Returns true when the browser was restored.
     @discardableResult
     func restoreBrowser(_ snapshot: RemovedBrowserSnapshot, undoManager: UndoManager? = nil) -> Bool {
-        let original = snapshot.browser
-        guard !configuredBrowsers.contains(where: { $0.id == original.id || $0.identity == original.identity }) else {
-            return false
-        }
+        restoreBrowsers([snapshot], undoManager: undoManager) == 1
+    }
 
-        var restored = original
-        if configuredBrowsers.contains(where: { $0.shortcutKey == restored.shortcutKey }) {
-            restored.shortcutKey = nextAvailableShortcutKey()
-        }
-
+    /// Batch form of `restoreBrowser`: one mutation, one (redo) undo registration. Snapshots
+    /// are re-inserted in ascending original-index order so every browser lands where it was.
+    /// Returns how many were restored.
+    @discardableResult
+    func restoreBrowsers(_ snapshots: [RemovedBrowserSnapshot], undoManager: UndoManager? = nil) -> Int {
         var updated = configuredBrowsers
-        updated.insert(restored, at: min(max(snapshot.index, 0), updated.count))
+        var restoredIDs: Set<UUID> = []
+
+        for snapshot in snapshots.sorted(by: { $0.index < $1.index }) {
+            let original = snapshot.browser
+            guard !updated.contains(where: { $0.id == original.id || $0.identity == original.identity }) else {
+                continue
+            }
+            var restored = original
+            if updated.contains(where: { $0.shortcutKey == restored.shortcutKey }) {
+                restored.shortcutKey = nextAvailableShortcutKey(excluding: updated)
+            }
+            updated.insert(restored, at: min(max(snapshot.index, 0), updated.count))
+            restoredIDs.insert(restored.id)
+        }
+        guard !restoredIDs.isEmpty else { return 0 }
         configuredBrowsers = updated
 
         if let undoManager {
             undoManager.registerUndo(withTarget: self) { manager in
                 MainActor.assumeIsolated {
-                    _ = manager.removeBrowser(id: restored.id, undoManager: undoManager)
+                    _ = manager.removeBrowsers(ids: restoredIDs, undoManager: undoManager)
                 }
             }
-            undoManager.setActionName("Remove Browser")
+            undoManager.setActionName(restoredIDs.count == 1 ? "Remove Browser" : "Remove Browsers")
         }
-        return true
+        return restoredIDs.count
     }
 
     /// Number of routing rules (enabled or not) that open links in this browser.
@@ -1336,6 +1406,34 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         return result
     }
 
+    /// Makes every link to `host` open in `browser`: updates the plain host rule if one
+    /// exists, otherwise adds one.
+    @discardableResult
+    func alwaysOpen(host: String, in browser: BrowserConfig) -> Result<BrowserRoutingRule, RoutingRuleValidationError> {
+        let pattern = normalizedRoutingHostPattern(host)
+        if var existing = routingRules.first(where: {
+            !$0.useRegex && $0.pathPrefix == nil && $0.sourceAppBundleIDs.isEmpty && $0.hostPattern == pattern
+        }) {
+            existing.browserBundleId = browser.bundleId
+            existing.profile = browser.profile
+            existing.isEnabled = true
+            existing.usePrivateMode = false
+            let result = updateRule(existing)
+            if case .success(let rule) = result { moveRuleToTop(rule.id) }
+            return result
+        }
+        let result = addRoutingRule(name: host, hostPattern: host, pathPrefix: nil, browserBundleId: browser.bundleId, profile: browser.profile)
+        if case .success(let rule) = result { moveRuleToTop(rule.id) }
+        return result
+    }
+
+    /// Rules are first-match, so "always" only holds if this rule is checked before any
+    /// broader rule (a wildcard, path or source-app rule) that also matches the host.
+    private func moveRuleToTop(_ id: UUID) {
+        guard let index = routingRules.firstIndex(where: { $0.id == id }), index > 0 else { return }
+        routingRules.insert(routingRules.remove(at: index), at: 0)
+    }
+
     func removeRoutingRule(id: UUID) {
         routingRules.removeAll { $0.id == id }
     }
@@ -1491,22 +1589,41 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         return result
     }
 
+    /// A rule taken out of the list, with the index it occupied.
+    struct RemovedRoutingRule: Equatable {
+        let rule: BrowserRoutingRule
+        let index: Int
+    }
+
     /// Removes a rule and, when an undo manager is supplied, registers an undo that
     /// puts it back at the same index (Edit ▸ Undo / Command-Z). Returns the removed
     /// rule's former index, or nil when no rule has that ID.
     @discardableResult
     func deleteRoutingRule(id: UUID, undoManager: UndoManager?) -> Int? {
-        guard let index = routingRules.firstIndex(where: { $0.id == id }) else { return nil }
-        let removed = routingRules.remove(at: index)
+        deleteRoutingRules(ids: [id], undoManager: undoManager).first?.index
+    }
+
+    /// Removes several rules in one mutation and registers ONE undo step ("Delete Rules",
+    /// or "Delete Rule" for a single one) restoring all of them at their original indices.
+    /// Returns the removed rules in list order; unknown IDs are ignored.
+    @discardableResult
+    func deleteRoutingRules(ids: Set<UUID>, undoManager: UndoManager?) -> [RemovedRoutingRule] {
+        let removed = routingRules.enumerated()
+            .filter { ids.contains($0.element.id) }
+            .map { RemovedRoutingRule(rule: $0.element, index: $0.offset) }
+        guard !removed.isEmpty else { return [] }
+
+        routingRules.removeAll { ids.contains($0.id) }
+
         if let undoManager {
             undoManager.registerUndo(withTarget: self) { manager in
                 MainActor.assumeIsolated {
-                    manager.restoreRoutingRule(removed, at: index, undoManager: undoManager)
+                    manager.restoreRoutingRules(removed, undoManager: undoManager)
                 }
             }
-            undoManager.setActionName("Delete Rule")
+            undoManager.setActionName(removed.count == 1 ? "Delete Rule" : "Delete Rules")
         }
-        return index
+        return removed
     }
 
     /// Re-inserts a previously stored rule at `index` (clamped). The rule already passed
@@ -1514,16 +1631,28 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     /// browser has since been removed — rather than being silently dropped. Registers
     /// the matching redo (delete) when an undo manager is supplied.
     func restoreRoutingRule(_ rule: BrowserRoutingRule, at index: Int, undoManager: UndoManager?) {
-        guard !routingRules.contains(where: { $0.id == rule.id }) else { return }
-        let clamped = min(max(index, 0), routingRules.count)
-        routingRules.insert(rule, at: clamped)
+        restoreRoutingRules([RemovedRoutingRule(rule: rule, index: index)], undoManager: undoManager)
+    }
+
+    /// Batch form of `restoreRoutingRule`: ascending-index insertion, one mutation, one redo.
+    func restoreRoutingRules(_ entries: [RemovedRoutingRule], undoManager: UndoManager?) {
+        var updated = routingRules
+        var restoredIDs: Set<UUID> = []
+        for entry in entries.sorted(by: { $0.index < $1.index }) {
+            guard !updated.contains(where: { $0.id == entry.rule.id }) else { continue }
+            updated.insert(entry.rule, at: min(max(entry.index, 0), updated.count))
+            restoredIDs.insert(entry.rule.id)
+        }
+        guard !restoredIDs.isEmpty else { return }
+        routingRules = updated
+
         if let undoManager {
             undoManager.registerUndo(withTarget: self) { manager in
                 MainActor.assumeIsolated {
-                    _ = manager.deleteRoutingRule(id: rule.id, undoManager: undoManager)
+                    _ = manager.deleteRoutingRules(ids: restoredIDs, undoManager: undoManager)
                 }
             }
-            undoManager.setActionName("Delete Rule")
+            undoManager.setActionName(restoredIDs.count == 1 ? "Delete Rule" : "Delete Rules")
         }
     }
 
@@ -2411,8 +2540,26 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
     }
 
-    func open(url: URL, withBrowserBundleID bundleId: String, profile: String? = nil, usePrivateMode: Bool = false) {
+    func open(
+        url: URL,
+        withBrowserBundleID bundleId: String,
+        profile: String? = nil,
+        usePrivateMode: Bool = false,
+        sourceApp: String? = nil,
+        viaRule: String? = nil,
+        privateIntent: Bool = false
+    ) {
+        func recordHistory() {
+            LinkHistory.shared.record(
+                url: url,
+                source: sourceApp,
+                outcome: .browser(bundleID: bundleId, profile: profile, viaRule: viaRule),
+                isPrivate: usePrivateMode || privateIntent
+            )
+        }
+
         if AppEnvironment.shouldDisableExternalURLOpen {
+            recordHistory()
             lastOpenedBrowserBundleIDForTesting = bundleId
             if AppEnvironment.isUITesting {
                 let count = defaults.integer(forKey: AppEnvironment.uiTestOpenInvocationCountKey)
@@ -2482,8 +2629,10 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
         #endif
 
-        // Record frequency for suggestions
-        if let domain = url.host {
+        recordHistory()
+
+        // Record frequency for suggestions (never for private opens)
+        if !(usePrivateMode || privateIntent), let domain = url.host {
             DomainFrequencyTracker.shared.record(domain: domain.lowercased(), browserBundleID: bundleId)
         }
     }
@@ -2715,18 +2864,8 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         defaults.removeObject(forKey: Constants.routingRulesKey)
     }
 
-    private func clearPersistedRecentURLs() {
-        defaults.removeObject(forKey: Constants.recentURLsKey)
-    }
-
-    func addRecentURL(_ url: URL) {
-        var newURLs = recentURLs
-        newURLs.removeAll { $0 == url }
-        newURLs.insert(url, at: 0)
-        if newURLs.count > 5 {
-            newURLs = Array(newURLs.prefix(5))
-        }
-        recentURLs = newURLs
+    private func clearLegacyRecentURLs() {
+        defaults.removeObject(forKey: Constants.legacyRecentURLsKey)
     }
 
     private func loadHiddenBundleIDs() {

@@ -45,11 +45,25 @@ struct ContentView: View {
     @State private var quickOverflowPresented = false
     @State private var quickOverflowSelectedBrowserId: UUID?
     @State private var dismissTask: DispatchWorkItem?
+    @State private var presentedAt = ProcessInfo.processInfo.systemUptime
     @State private var focusObserver: NSObjectProtocol?
     @State private var keyEventMonitor: Any?
+    /// Set while a focus loss inside the grace period left the picker up: the next click in
+    /// another app dismisses it. The picker doesn't take key status back, so typing keeps
+    /// going to the app the user clicked into.
+    @State private var graceClickMonitor: Any?
     @State private var showingConfigureRule = false
     @AppStorage("pickerHintOpenCount") private var pickerHintOpenCount = 0
     private static let pickerHintOpens = 5
+
+    /// A click elsewhere in the first moments after the picker appears is almost always the
+    /// user's own click landing as the picker steals focus, not a decision to leave.
+    static let resignKeyGracePeriod: TimeInterval = 0.4
+
+    /// Whether losing key status should dismiss the picker. Escape is unaffected.
+    static func shouldDismissOnResignKey(elapsedSincePresented: TimeInterval) -> Bool {
+        elapsedSincePresented >= resignKeyGracePeriod
+    }
     @State private var urlCopied = false
     @State private var privateMode = false
     @State private var isUnshortening = false
@@ -234,6 +248,7 @@ struct ContentView: View {
             .onAppear(perform: handleAppear)
             .onDisappear(perform: handleDisappear)
             .onChange(of: browserManager.currentURL) { oldURL, newURL in
+                if oldURL == nil, newURL != nil { presentedAt = ProcessInfo.processInfo.systemUptime }
                 if !isPreview, oldURL == nil, newURL != nil, pickerHintOpenCount <= Self.pickerHintOpens {
                     pickerHintOpenCount += 1
                 }
@@ -246,6 +261,11 @@ struct ContentView: View {
             .onChange(of: browserManager.currentURLPrivateModeRequested) {
                 syncPrivateModeRequest()
             }
+            .onChange(of: privateMode) {
+                // Once the user marks this link private, it stays out of history even if the
+                // picker is replaced or closed before they choose a browser.
+                if privateMode, !isPreview { browserManager.pickerPrivateIntent = true }
+            }
             .onChange(of: browserManager.pickerLayoutMode) {
                 loadLinkPreview(for: browserManager.currentURL)
                 prepareSelectionForPresentation()
@@ -257,6 +277,7 @@ struct ContentView: View {
     }
 
     private func handleAppear() {
+        presentedAt = ProcessInfo.processInfo.systemUptime
         syncPrivateModeRequest()
         runningBundleIDs = BrowserManager.runningBrowserBundleIDs()
         loadLinkPreview(for: browserManager.currentURL)
@@ -289,6 +310,14 @@ struct ContentView: View {
                             // Key window being one of the panel's children (e.g. a
                             // popover window) also counts as still-focused.
                             if let key = NSApp.keyWindow, w.childWindows?.contains(key) == true { return }
+                            // Too soon after appearing: leave the picker up (without taking key
+                            // status back) until the next deliberate click elsewhere.
+                            guard Self.shouldDismissOnResignKey(
+                                elapsedSincePresented: ProcessInfo.processInfo.systemUptime - presentedAt
+                            ) else {
+                                installGraceClickMonitor()
+                                return
+                            }
                             dismissPicker()
                         }
                     }
@@ -307,6 +336,7 @@ struct ContentView: View {
             focusObserver = nil
         }
         removeKeyEventMonitor()
+        removeGraceClickMonitor()
         dismissTask?.cancel()
         dismissTask = nil
         previewTask?.cancel()
@@ -775,6 +805,9 @@ struct ContentView: View {
             }
             .padding(24)
             .frame(width: 280)
+            // Without `.contain` the identifier is stamped onto every child and overwrites
+            // their own (iphoneQR.image, iphoneQR.urlText, iphoneQR.closeButton).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("iphoneQR.sheet")
             .task(id: url) {
                 // Favicon is a pure overlay inside the fixed-size QR square — fetching
@@ -1550,7 +1583,15 @@ struct ContentView: View {
 
     // MARK: - Dismiss
 
-    private func dismissPicker() {
+    /// - Parameter recordDismissal: false when the link was just opened, so it isn't also
+    ///   logged as dismissed.
+    private func dismissPicker(recordDismissal: Bool = true) {
+        removeGraceClickMonitor()
+        // While a short link is still resolving, the routing task records the outcome.
+        if recordDismissal, !isPreview, !privateMode, !browserManager.pickerPrivateIntent,
+           !browserManager.isResolvingIncomingURL, let url = browserManager.currentURL {
+            LinkHistory.shared.record(url: url, source: browserManager.pickerSourceAppBundleId, outcome: .dismissed)
+        }
         // Reset without animation: the panel is ordered out right after, and a transition
         // left running off-screen could show a stale frame on a quick reopen.
         var transaction = Transaction()
@@ -1577,6 +1618,8 @@ struct ContentView: View {
         browserManager.currentRewriteTrace = []
         phoneHandoffAdapter.stop()
         browserManager.currentURL = nil
+        browserManager.pickerSourceAppBundleId = nil
+        browserManager.pickerPrivateIntent = false
     }
 
     // MARK: - Browser Action
@@ -1584,8 +1627,17 @@ struct ContentView: View {
     private func openUrl(with browser: BrowserConfig, usePrivateMode: Bool = false) {
         guard let url = browserManager.currentURL else { return }
         let effectiveUsePrivateMode = supportsPrivateLaunchMode && usePrivateMode
-        if !isPreview { dismissPicker() }
-        browserManager.open(url: url, withBrowserBundleID: browser.bundleId, profile: browser.profile, usePrivateMode: effectiveUsePrivateMode)
+        let sourceApp = browserManager.pickerSourceAppBundleId
+        let privateIntent = browserManager.pickerPrivateIntent
+        if !isPreview { dismissPicker(recordDismissal: false) }
+        browserManager.open(
+            url: url,
+            withBrowserBundleID: browser.bundleId,
+            profile: browser.profile,
+            usePrivateMode: effectiveUsePrivateMode,
+            sourceApp: sourceApp,
+            privateIntent: privateIntent
+        )
     }
 
     private func requestedPrivateMode(modifierFlags: NSEvent.ModifierFlags) -> Bool {
@@ -1652,6 +1704,23 @@ struct ContentView: View {
         removeKeyEventMonitor()
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             self.handlePickerKeyDown(event) ? nil : event
+        }
+    }
+
+    private func installGraceClickMonitor() {
+        guard graceClickMonitor == nil else { return }
+        // Global monitors only see clicks in other apps, so clicking the picker itself
+        // doesn't trigger this; it becomes key and the normal focus-loss path takes over.
+        graceClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { _ in
+            removeGraceClickMonitor()
+            dismissPicker()
+        }
+    }
+
+    private func removeGraceClickMonitor() {
+        if let monitor = graceClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            graceClickMonitor = nil
         }
     }
 
