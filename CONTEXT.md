@@ -34,6 +34,18 @@ _Avoid_: URL cleaning (too broad — cleanup is specifically the tracking-parame
 **Route Pipeline**:
 The fixed order URLs pass through before launch: rewrite rules → shortlink resolution → tracking cleanup → routing-rule match → fallback (if no match).
 
+**Link History**:
+A local log of links Chowser handled: time, source app, link, and outcome. Capped at 500 entries and 30 days; private-mode opens are never recorded. Stored on this Mac only and not part of Export All.
+_Avoid_: Analytics, usage data (nothing is sent anywhere)
+
+**Activity Level**:
+The setting that decides how much Chowser remembers: Full history, Stats only (scheme and host, no path or query), or Off (records nothing). Lowering it deletes the data the new level does not allow, including domain click counts when Off.
+_Avoid_: Logging level (that is the diagnostics log)
+
+**Dismissed Link**:
+A link whose picker was closed via Escape or click-away without choosing a destination. Kept in Link History so it can be reopened with `chowser://reopen`.
+_Avoid_: Cancelled, lost link
+
 **App Mode**:
 Chowser runs as a regular macOS app with a Dock icon, Cmd-Tab presence, and native application menus. It does not show a menu-bar status item.
 

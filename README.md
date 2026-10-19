@@ -66,6 +66,12 @@ Chowser runs from the menu bar by default. To use a regular Dock app instead, ch
 - **Send to phone.** Share the current link by AirDrop, QR code, or copy. Handoff is used when available.
 - **Clipboard URL.** Open a link from the clipboard via the menu bar.
 
+**Activity**
+
+- **Link history.** Chowser keeps a local log of the links it handles: when, from which app, and where each one went. Links you dismissed (Escape or click-away) are kept too, so a link an agent or script opened with `open https://…` is never lost. Find it in **Settings → Activity**, then open it, open it in another browser, copy it, or create a rule.
+- **Recent links in the menu bar.** The last 5 links are listed in the menu. Hold `⌥` to create a rule for a link's host. **Reopen Last Link In** sends the last link to any configured browser.
+- **Activity level.** Choose Full history, Stats only, or Off in **Settings → Privacy**.
+
 **Management**
 
 - Import and export browsers and rules as JSON. Imports merge with your existing setup.
@@ -95,8 +101,9 @@ Hold `Shift` when a link arrives to force the picker, even when a rule matches.
 Chowser includes an optional HTTP API on `localhost:24245` that lets an AI assistant read and change your browsers, rules, rewrites, and settings. It is off until you start it.
 
 - **Start or stop:** from the menu bar, or headlessly with `chowser://mcp/start` and `chowser://mcp/stop`.
+- **Reopen a dismissed link:** `chowser://reopen` runs the most recent dismissed link through routing again. It needs Full history.
 - **Authentication:** every request needs the bearer token shown in **Settings → General**.
-- **Endpoints:** `GET /status`, `GET` / `POST` / `DELETE` on `/browsers`, `/rules`, and `/rewrites`, `POST /browsers/preview` (dry-run a launch command), and `GET` / `POST /settings`.
+- **Endpoints:** `GET /status`, `GET` / `POST` / `DELETE` on `/browsers`, `/rules`, and `/rewrites`, `POST /browsers/preview` (dry-run a launch command), and `GET` / `POST /settings` (including `activityLevel`). Link history is deliberately not exposed over the API.
 
 ```bash
 curl -H "Authorization: Bearer $CHOWSER_TOKEN" http://localhost:24245/status
@@ -107,6 +114,8 @@ The server only listens on your Mac. It is not reachable from the network.
 ## Privacy
 
 - Shortlink resolution and link preview make network requests, so both are **off by default**. Turn them on in **Settings → Behavior**.
+- **Link history stays on your Mac.** It is saved as a file in `~/Library/Application Support/Chowser/` (readable only by you), capped at 500 links and 30 days, and not included in Export All. Private-mode opens are never recorded. Chowser never sends usage data anywhere.
+- **Activity level** (Settings → Privacy): Full history (default), Stats only (keeps only the website name, not the path or query), or Off (records nothing). Lowering the level asks first, then deletes the data the new level doesn't allow. Off also deletes the domain click counts behind picker hints and suggested rules. **Clear History** is on the Activity page.
 - Rewrite catalogs and native-app directories are signed (Ed25519) and verified against a public key pinned in the app. Chowser downloads the catalog files only. The URLs you click are never sent to the catalog host.
 
 ## Build from source

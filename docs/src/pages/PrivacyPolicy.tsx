@@ -8,7 +8,7 @@ export const PrivacyPolicy = () => {
             <main className="flex-1 max-w-3xl mx-auto px-6 py-20">
                 <h1 className="text-4xl font-bold mb-2">Privacy Policy</h1>
                 <p className="text-muted-foreground mb-10">
-                    Last updated: March 4, 2026
+                    Last updated: October 19, 2026
                 </p>
 
                 <div className="space-y-8 text-muted-foreground leading-relaxed">
@@ -30,7 +30,7 @@ export const PrivacyPolicy = () => {
                         </h2>
                         <p>
                             <strong className="text-foreground">
-                                Chowser does not collect, transmit, or store any
+                                Chowser does not collect or transmit any
                                 personal data.
                             </strong>{" "}
                             All information stays on your Mac.
@@ -56,7 +56,14 @@ export const PrivacyPolicy = () => {
                             </li>
                             <li>
                                 Domain click frequency counts (used for
-                                suggesting routing rules)
+                                picker hints and suggesting routing rules)
+                            </li>
+                            <li>
+                                Link history: for each link Chowser handles,
+                                the time, the app that opened it, the link
+                                itself, and whether it opened in a browser,
+                                opened in a native app, or was dismissed.
+                                Private-mode opens are never recorded.
                             </li>
                             <li>
                                 App preferences (window position, update
@@ -67,6 +74,18 @@ export const PrivacyPolicy = () => {
                             This data never leaves your device and is not
                             accessible to us or any third party.
                         </p>
+                        <p className="mt-3">
+                            Link history is saved as a file in
+                            ~/Library/Application Support/Chowser/ (inside the
+                            app container in the App Store version) that only
+                            your user account can read. It keeps at most 500
+                            links for 30 days and is not included in exports.
+                            In Settings → Privacy, set the activity level to
+                            Stats only to keep just the website name, or to Off
+                            to record nothing and delete the history and domain
+                            click counts. Clear History in Settings → Activity
+                            deletes the history at any time.
+                        </p>
                     </section>
 
                     <section>
@@ -75,8 +94,13 @@ export const PrivacyPolicy = () => {
                         </h2>
                         <p>
                             Chowser makes network requests only to check for app
-                            updates via the App Store. No user data is transmitted
-                            during update checks.
+                            updates (the App Store version through the App Store,
+                            the direct download through GitHub), to download its
+                            signed rewrite and native-app catalogs from
+                            chowser.sreerams.in, and, only if you turn on online
+                            lookups in Settings → Privacy, to expand short links
+                            and fetch link previews. Your link history, settings,
+                            and usage stats are never sent.
                         </p>
                     </section>
 
