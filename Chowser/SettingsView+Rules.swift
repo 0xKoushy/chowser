@@ -71,6 +71,8 @@ struct RulesSettingsPage: View {
 
     @Environment(\.undoManager) private var undoManager
     @State private var showingTester = false
+    /// Rules waiting on the delete confirmation. Empty when no dialog is showing.
+    @State private var pendingDeletion: Set<UUID> = []
 
     var body: some View {
         SettingsDetailScaffold(
@@ -84,6 +86,24 @@ struct RulesSettingsPage: View {
         .inspector(isPresented: inspectorPresented) {
             inspectorContent
                 .inspectorColumnWidth(min: 260, ideal: 290, max: 420)
+        }
+        .confirmationDialog(
+            deletionTitle,
+            isPresented: Binding(
+                get: { !pendingDeletion.isEmpty },
+                set: { if !$0 { pendingDeletion = [] } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                model.delete(ids: pendingDeletion, undoManager: undoManager)
+                pendingDeletion = []
+            }
+            .accessibilityIdentifier("settings.confirmDelete.confirm")
+            Button("Cancel", role: .cancel) { pendingDeletion = [] }
+                .accessibilityIdentifier("settings.confirmDelete.cancel")
+        } message: {
+            Text("You can undo this with ⌘Z.")
         }
         .onAppear(perform: consumeCreateRequest)
         .onChange(of: createRequested) { consumeCreateRequest() }
@@ -264,7 +284,7 @@ struct RulesSettingsPage: View {
         let rows = model.rows
         let matchedID = showingTester ? model.testOutcome().matchedRuleID : nil
 
-        return Table(of: RulesEditorModel.Row.self, selection: $model.selection) {
+        return Table(of: RulesEditorModel.Row.self, selection: $model.selectedIDs) {
             TableColumn("#") { row in
                 Text("\(row.position)")
                     .monospacedDigit()
@@ -329,10 +349,14 @@ struct RulesSettingsPage: View {
         .tableStyle(.bordered(alternatesRowBackgrounds: false))
         .contextMenu(forSelectionType: UUID.self) { ids in
             if let id = ids.first {
-                Button("Duplicate") { manager.duplicateRoutingRule(id: id) }
-                    .disabled(model.isUnsaved(id))
-                Divider()
-                Button("Delete Rule") { model.delete(id, undoManager: undoManager) }
+                if ids.count == 1 {
+                    Button("Duplicate") { manager.duplicateRoutingRule(id: id) }
+                        .disabled(model.isUnsaved(id))
+                    Divider()
+                }
+                Button(ids.count == 1 ? "Delete Rule" : "Delete \(ids.count) Rules") {
+                    requestDeletion(of: ids)
+                }
             }
         }
         .onDeleteCommand(perform: deleteSelection)
@@ -413,7 +437,7 @@ struct RulesSettingsPage: View {
                     .frame(width: 24, height: 20)
                     .contentShape(Rectangle())
             }
-            .disabled(model.selection == nil)
+            .disabled(model.selectedIDs.isEmpty)
             .accessibilityLabel("Delete Selected Rule")
             .help("Delete Selected Rule")
             .accessibilityIdentifier("settings.rules.footerRemoveButton")
@@ -438,29 +462,68 @@ struct RulesSettingsPage: View {
     private var inspectorPresented: Binding<Bool> {
         Binding(
             get: {
+                if model.selectedIDs.count > 1 { return true }
                 guard let id = model.selection else { return false }
                 return model.editableRule(for: id) != nil
             },
             set: { isPresented in
-                if !isPresented { model.selection = nil }
+                if !isPresented { model.selectedIDs = [] }
             }
         )
     }
 
     @ViewBuilder
     private var inspectorContent: some View {
-        if let id = model.selection, model.editableRule(for: id) != nil {
+        if model.selectedIDs.count > 1 {
+            multiSelectSummary(count: model.selectedIDs.count)
+        } else if let id = model.selection, model.editableRule(for: id) != nil {
             RuleInspector(
                 model: model,
                 manager: manager,
                 ruleID: id,
-                onDelete: { model.delete(id, undoManager: undoManager) }
+                onDelete: { requestDeletion(of: [id]) }
             )
             .id(id)
         } else {
             Text("Select a rule to edit it.")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func multiSelectSummary(count: Int) -> some View {
+        VStack(spacing: 12) {
+            Text("\(count) rules selected")
+                .font(.headline)
+                .accessibilityIdentifier("settings.rules.multiSelectSummary")
+            Button("Delete \(count) Rules…", role: .destructive) {
+                requestDeletion(of: model.selectedIDs)
+            }
+            .accessibilityIdentifier("settings.rules.multiSelectDeleteButton")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: Deletion
+
+    private var deletionTitle: String {
+        guard !pendingDeletion.isEmpty else { return "" }
+        guard pendingDeletion.count == 1, let id = pendingDeletion.first,
+              let rule = model.rows.first(where: { $0.id == id })?.rule else {
+            return "Delete \(pendingDeletion.count) rules?"
+        }
+        let name = rule.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = name.isEmpty ? rule.hostPattern.trimmingCharacters(in: .whitespacesAndNewlines) : name
+        return label.isEmpty ? "Delete this rule?" : "Delete rule “\(label)”?"
+    }
+
+    /// Asks before deleting. A new rule that was never saved is discarded without asking.
+    private func requestDeletion(of ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        if ids.allSatisfy({ model.isUnsaved($0) }) {
+            model.delete(ids: ids, undoManager: undoManager)
+        } else {
+            pendingDeletion = ids
         }
     }
 
@@ -471,8 +534,7 @@ struct RulesSettingsPage: View {
     }
 
     private func deleteSelection() {
-        guard let id = model.selection else { return }
-        model.delete(id, undoManager: undoManager)
+        requestDeletion(of: model.selectedIDs)
     }
 
     private func consumeCreateRequest() {

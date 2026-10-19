@@ -9,6 +9,7 @@ All notable changes to Chowser are documented here.
 - **Never lose a dismissed link.** If a script or coding agent runs `open https://…` and you click away from the picker, the link is still in Activity. `chowser://reopen` runs the last dismissed link through routing again.
 - **Recent links in the menu bar.** "Show Recent Links" lists the last 5 links with an outcome icon; hold ⌥ to create a rule for a host. "Show All…" opens Activity. "Reopen Last Link In" sends the last link to any browser; hold ⌥ to always open that host in the browser.
 - **Activity level** in Settings → Privacy: Full history, Stats only (host only, no path or query), or Off. Lowering it asks first, then deletes data the new level doesn't allow. The local API has an `activityLevel` setting too.
+- **Delete several browsers or rules at once.** Cmd-click or Shift-click rows in Settings → Browsers or Rules, then remove them together. Chowser asks first, and one ⌘Z brings them all back in their original places.
 
 ### Changed
 - **The "Recent URLs" submenu is replaced** by Recent Links and Reopen Last Link In. Both appear only at Full history.

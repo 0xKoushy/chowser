@@ -1012,20 +1012,30 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     /// soon as the browser is restored. Redo is registered automatically by the restore.
     @discardableResult
     func removeBrowser(id: UUID, undoManager: UndoManager?) -> RemovedBrowserSnapshot? {
-        guard let index = configuredBrowsers.firstIndex(where: { $0.id == id }) else { return nil }
+        removeBrowsers(ids: [id], undoManager: undoManager).first
+    }
 
-        let snapshot = RemovedBrowserSnapshot(browser: configuredBrowsers[index], index: index)
-        configuredBrowsers.remove(at: index)
+    /// Removes several browsers in one mutation and registers ONE undo step ("Remove
+    /// Browsers", or "Remove Browser" for a single one) that restores all of them at their
+    /// original indices. Returns the removed browsers in list order; unknown IDs are ignored.
+    @discardableResult
+    func removeBrowsers(ids: Set<UUID>, undoManager: UndoManager?) -> [RemovedBrowserSnapshot] {
+        let snapshots = configuredBrowsers.enumerated()
+            .filter { ids.contains($0.element.id) }
+            .map { RemovedBrowserSnapshot(browser: $0.element, index: $0.offset) }
+        guard !snapshots.isEmpty else { return [] }
+
+        configuredBrowsers.removeAll { ids.contains($0.id) }
 
         if let undoManager {
             undoManager.registerUndo(withTarget: self) { manager in
                 MainActor.assumeIsolated {
-                    manager.restoreBrowser(snapshot, undoManager: undoManager)
+                    manager.restoreBrowsers(snapshots, undoManager: undoManager)
                 }
             }
-            undoManager.setActionName("Remove Browser")
+            undoManager.setActionName(snapshots.count == 1 ? "Remove Browser" : "Remove Browsers")
         }
-        return snapshot
+        return snapshots
     }
 
     /// Re-inserts a removed browser at its original index (clamped to the current list).
@@ -1034,29 +1044,41 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     /// profile) has been added again since. Returns true when the browser was restored.
     @discardableResult
     func restoreBrowser(_ snapshot: RemovedBrowserSnapshot, undoManager: UndoManager? = nil) -> Bool {
-        let original = snapshot.browser
-        guard !configuredBrowsers.contains(where: { $0.id == original.id || $0.identity == original.identity }) else {
-            return false
-        }
+        restoreBrowsers([snapshot], undoManager: undoManager) == 1
+    }
 
-        var restored = original
-        if configuredBrowsers.contains(where: { $0.shortcutKey == restored.shortcutKey }) {
-            restored.shortcutKey = nextAvailableShortcutKey()
-        }
-
+    /// Batch form of `restoreBrowser`: one mutation, one (redo) undo registration. Snapshots
+    /// are re-inserted in ascending original-index order so every browser lands where it was.
+    /// Returns how many were restored.
+    @discardableResult
+    func restoreBrowsers(_ snapshots: [RemovedBrowserSnapshot], undoManager: UndoManager? = nil) -> Int {
         var updated = configuredBrowsers
-        updated.insert(restored, at: min(max(snapshot.index, 0), updated.count))
+        var restoredIDs: Set<UUID> = []
+
+        for snapshot in snapshots.sorted(by: { $0.index < $1.index }) {
+            let original = snapshot.browser
+            guard !updated.contains(where: { $0.id == original.id || $0.identity == original.identity }) else {
+                continue
+            }
+            var restored = original
+            if updated.contains(where: { $0.shortcutKey == restored.shortcutKey }) {
+                restored.shortcutKey = nextAvailableShortcutKey(excluding: updated)
+            }
+            updated.insert(restored, at: min(max(snapshot.index, 0), updated.count))
+            restoredIDs.insert(restored.id)
+        }
+        guard !restoredIDs.isEmpty else { return 0 }
         configuredBrowsers = updated
 
         if let undoManager {
             undoManager.registerUndo(withTarget: self) { manager in
                 MainActor.assumeIsolated {
-                    _ = manager.removeBrowser(id: restored.id, undoManager: undoManager)
+                    _ = manager.removeBrowsers(ids: restoredIDs, undoManager: undoManager)
                 }
             }
-            undoManager.setActionName("Remove Browser")
+            undoManager.setActionName(restoredIDs.count == 1 ? "Remove Browser" : "Remove Browsers")
         }
-        return true
+        return restoredIDs.count
     }
 
     /// Number of routing rules (enabled or not) that open links in this browser.
@@ -1512,22 +1534,41 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         return result
     }
 
+    /// A rule taken out of the list, with the index it occupied.
+    struct RemovedRoutingRule: Equatable {
+        let rule: BrowserRoutingRule
+        let index: Int
+    }
+
     /// Removes a rule and, when an undo manager is supplied, registers an undo that
     /// puts it back at the same index (Edit ▸ Undo / Command-Z). Returns the removed
     /// rule's former index, or nil when no rule has that ID.
     @discardableResult
     func deleteRoutingRule(id: UUID, undoManager: UndoManager?) -> Int? {
-        guard let index = routingRules.firstIndex(where: { $0.id == id }) else { return nil }
-        let removed = routingRules.remove(at: index)
+        deleteRoutingRules(ids: [id], undoManager: undoManager).first?.index
+    }
+
+    /// Removes several rules in one mutation and registers ONE undo step ("Delete Rules",
+    /// or "Delete Rule" for a single one) restoring all of them at their original indices.
+    /// Returns the removed rules in list order; unknown IDs are ignored.
+    @discardableResult
+    func deleteRoutingRules(ids: Set<UUID>, undoManager: UndoManager?) -> [RemovedRoutingRule] {
+        let removed = routingRules.enumerated()
+            .filter { ids.contains($0.element.id) }
+            .map { RemovedRoutingRule(rule: $0.element, index: $0.offset) }
+        guard !removed.isEmpty else { return [] }
+
+        routingRules.removeAll { ids.contains($0.id) }
+
         if let undoManager {
             undoManager.registerUndo(withTarget: self) { manager in
                 MainActor.assumeIsolated {
-                    manager.restoreRoutingRule(removed, at: index, undoManager: undoManager)
+                    manager.restoreRoutingRules(removed, undoManager: undoManager)
                 }
             }
-            undoManager.setActionName("Delete Rule")
+            undoManager.setActionName(removed.count == 1 ? "Delete Rule" : "Delete Rules")
         }
-        return index
+        return removed
     }
 
     /// Re-inserts a previously stored rule at `index` (clamped). The rule already passed
@@ -1535,16 +1576,28 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     /// browser has since been removed — rather than being silently dropped. Registers
     /// the matching redo (delete) when an undo manager is supplied.
     func restoreRoutingRule(_ rule: BrowserRoutingRule, at index: Int, undoManager: UndoManager?) {
-        guard !routingRules.contains(where: { $0.id == rule.id }) else { return }
-        let clamped = min(max(index, 0), routingRules.count)
-        routingRules.insert(rule, at: clamped)
+        restoreRoutingRules([RemovedRoutingRule(rule: rule, index: index)], undoManager: undoManager)
+    }
+
+    /// Batch form of `restoreRoutingRule`: ascending-index insertion, one mutation, one redo.
+    func restoreRoutingRules(_ entries: [RemovedRoutingRule], undoManager: UndoManager?) {
+        var updated = routingRules
+        var restoredIDs: Set<UUID> = []
+        for entry in entries.sorted(by: { $0.index < $1.index }) {
+            guard !updated.contains(where: { $0.id == entry.rule.id }) else { continue }
+            updated.insert(entry.rule, at: min(max(entry.index, 0), updated.count))
+            restoredIDs.insert(entry.rule.id)
+        }
+        guard !restoredIDs.isEmpty else { return }
+        routingRules = updated
+
         if let undoManager {
             undoManager.registerUndo(withTarget: self) { manager in
                 MainActor.assumeIsolated {
-                    _ = manager.deleteRoutingRule(id: rule.id, undoManager: undoManager)
+                    _ = manager.deleteRoutingRules(ids: restoredIDs, undoManager: undoManager)
                 }
             }
-            undoManager.setActionName("Delete Rule")
+            undoManager.setActionName(restoredIDs.count == 1 ? "Delete Rule" : "Delete Rules")
         }
     }
 

@@ -64,7 +64,9 @@ struct BrowsersSettingsPage: View {
 
     @Environment(\.undoManager) private var undoManager
 
-    @State private var selection: UUID?
+    @State private var selection: Set<UUID> = []
+    /// Browsers waiting on the remove confirmation. Empty when no dialog is showing.
+    @State private var pendingRemoval: Set<UUID> = []
     @State private var renamingID: UUID?
     @State private var showingAddSheet = false
     @State private var status: StatusMessage?
@@ -75,15 +77,19 @@ struct BrowsersSettingsPage: View {
     struct StatusMessage: Equatable {
         let text: String
         /// Set when the message is about a removal that Undo can reverse.
-        var removedBrowserID: UUID?
-        var removedBrowserName: String?
+        var removedBrowserIDs: [UUID] = []
+        /// Wording for the "Restored …" line shown once the removal has been undone.
+        var restoredDescription: String?
     }
 
     private var browsers: [BrowserConfig] { browserManager.configuredBrowsers }
 
     var body: some View {
         let browsers = self.browsers
-        let selectedBrowser = selection.flatMap { id in browsers.first { $0.id == id } }
+        let selectedBrowser = selection.count == 1
+            ? selection.first.flatMap { id in browsers.first { $0.id == id } }
+            : nil
+        let selectedCount = browsers.filter { selection.contains($0.id) }.count
 
         SettingsDetailScaffold(
             title: "Browsers",
@@ -103,11 +109,16 @@ struct BrowsersSettingsPage: View {
                             manager: browserManager,
                             ruleCount: browserManager.routingRuleCount(forBrowser: selectedBrowser),
                             profileAccessNeedsRecovery: profileAccessStatus.needsRecovery,
-                            onRemove: { remove(selectedBrowser.id) }
+                            onRemove: { requestRemoval(of: [selectedBrowser.id]) }
                         )
                         .id(selectedBrowser.id)
                         .frame(width: 300)
                         .frame(maxHeight: .infinity)
+                    } else if selectedCount > 1 {
+                        Divider()
+                        multiSelectSummary(count: selectedCount)
+                            .frame(width: 300)
+                            .frame(maxHeight: .infinity)
                     }
                 }
             }
@@ -117,6 +128,69 @@ struct BrowsersSettingsPage: View {
                 handleAdded(added)
             }
         }
+        .confirmationDialog(
+            removalTitle,
+            isPresented: Binding(
+                get: { !pendingRemoval.isEmpty },
+                set: { if !$0 { pendingRemoval = [] } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                remove(pendingRemoval)
+                pendingRemoval = []
+            }
+            .accessibilityIdentifier("settings.confirmDelete.confirm")
+            Button("Cancel", role: .cancel) { pendingRemoval = [] }
+                .accessibilityIdentifier("settings.confirmDelete.cancel")
+        } message: {
+            Text(removalMessage)
+        }
+    }
+
+    private func multiSelectSummary(count: Int) -> some View {
+        VStack(spacing: 12) {
+            Text("\(count) browsers selected")
+                .font(.headline)
+                .accessibilityIdentifier("settings.browsers.multiSelectSummary")
+            Button("Remove \(count) Browsers…", role: .destructive) {
+                requestRemoval(of: selection)
+            }
+            .accessibilityIdentifier("settings.browsers.multiSelectRemoveButton")
+        }
+        .padding(20)
+    }
+
+    // MARK: Removal confirmation
+
+    private var pendingBrowsers: [BrowserConfig] {
+        browsers.filter { pendingRemoval.contains($0.id) }
+    }
+
+    private var removalTitle: String {
+        let pending = pendingBrowsers
+        switch pending.count {
+        case 0: return ""
+        case 1: return "Remove \(pending[0].name)?"
+        default: return "Remove \(pending.count) browsers?"
+        }
+    }
+
+    private var removalMessage: String {
+        let pending = pendingBrowsers
+        let ruleCount = pending.reduce(0) { $0 + browserManager.routingRuleCount(forBrowser: $1) }
+        return "You can undo this with ⌘Z." + rulesNote(ruleCount: ruleCount, browserCount: pending.count)
+    }
+
+    /// " 2 rules for them won't match until you undo." (empty when no rule uses the browsers).
+    private func rulesNote(ruleCount: Int, browserCount: Int) -> String {
+        guard ruleCount > 0 else { return "" }
+        return " \(ruleCount) \(ruleCount == 1 ? "rule" : "rules") for \(browserCount == 1 ? "it" : "them") won't match until you undo."
+    }
+
+    private func requestRemoval(of ids: Set<UUID>) {
+        guard browsers.contains(where: { ids.contains($0.id) }) else { return }
+        pendingRemoval = ids
     }
 
     // MARK: Toolbar menu
@@ -198,19 +272,23 @@ struct BrowsersSettingsPage: View {
             .scrollContentBackground(.hidden)
             .contextMenu(forSelectionType: UUID.self) { ids in
                 if let id = ids.first {
-                    Button("Rename") { renamingID = id }
-                    Divider()
-                    Button("Remove Browser") { remove(id) }
+                    if ids.count == 1 {
+                        Button("Rename") { renamingID = id }
+                        Divider()
+                    }
+                    Button(ids.count == 1 ? "Remove Browser" : "Remove \(ids.count) Browsers") {
+                        requestRemoval(of: ids)
+                    }
                 }
             } primaryAction: { ids in
                 // Double-click or Return renames inline.
-                guard let id = ids.first else { return }
-                selection = id
+                guard ids.count == 1, let id = ids.first else { return }
+                selection = [id]
                 renamingID = id
             }
             .onDeleteCommand {
-                guard renamingID == nil, let selection else { return }
-                remove(selection)
+                guard renamingID == nil else { return }
+                requestRemoval(of: selection)
             }
             .overlay {
                 if browsers.isEmpty {
@@ -266,14 +344,14 @@ struct BrowsersSettingsPage: View {
                 .frame(height: 14)
 
             Button {
-                if let selection { remove(selection) }
+                requestRemoval(of: selection)
             } label: {
                 Image(systemName: "minus")
                     .frame(width: 24, height: 20)
                     .contentShape(Rectangle())
             }
-            .disabled(selection == nil)
-            .help("Remove the selected browser")
+            .disabled(selection.isEmpty)
+            .help("Remove the selected browsers")
             .accessibilityLabel("Remove Browser")
             .accessibilityIdentifier("settings.browser.removeButton")
 
@@ -287,8 +365,9 @@ struct BrowsersSettingsPage: View {
     private func statusLine(_ status: StatusMessage) -> some View {
         // After Undo (button or Edit > Undo) the removed browser is back; say so instead
         // of leaving a stale "Removed" line.
-        let isRestored = status.removedBrowserID.map { id in browsers.contains { $0.id == id } } ?? false
-        let text = isRestored ? "Restored \(status.removedBrowserName ?? "browser")." : status.text
+        let isRestored = !status.removedBrowserIDs.isEmpty
+            && status.removedBrowserIDs.allSatisfy { id in browsers.contains { $0.id == id } }
+        let text = isRestored ? "Restored \(status.restoredDescription ?? "browser")." : status.text
 
         return HStack(spacing: 6) {
             Text(text)
@@ -307,10 +386,11 @@ struct BrowsersSettingsPage: View {
     }
 
     private func canUndoRemoval(_ status: StatusMessage) -> Bool {
-        guard let removedID = status.removedBrowserID, let undoManager else { return false }
+        guard !status.removedBrowserIDs.isEmpty, let undoManager else { return false }
+        let name = undoManager.undoActionName
         return undoManager.canUndo
-            && undoManager.undoActionName == "Remove Browser"
-            && !browsers.contains { $0.id == removedID }
+            && (name == "Remove Browser" || name == "Remove Browsers")
+            && !status.removedBrowserIDs.allSatisfy { id in browsers.contains { $0.id == id } }
     }
 
     // MARK: Hidden apps
@@ -442,32 +522,35 @@ struct BrowsersSettingsPage: View {
         }
     }
 
-    private func remove(_ id: UUID) {
-        guard let index = browsers.firstIndex(where: { $0.id == id }) else { return }
+    private func remove(_ ids: Set<UUID>) {
+        guard let firstIndex = browsers.firstIndex(where: { ids.contains($0.id) }) else { return }
         renamingID = nil
 
-        guard let snapshot = browserManager.removeBrowser(id: id, undoManager: undoManager) else { return }
+        let removed = browserManager.removeBrowsers(ids: ids, undoManager: undoManager)
+        guard !removed.isEmpty else { return }
 
-        // Keep keyboard flow: select the row that slid into the removed one's place.
-        let remaining = browserManager.configuredBrowsers
-        if selection == id {
-            selection = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
+        // Keep keyboard flow: select the row that slid into the first removed one's place.
+        selection.subtract(ids)
+        if selection.isEmpty {
+            let remaining = browserManager.configuredBrowsers
+            if !remaining.isEmpty {
+                selection = [remaining[min(firstIndex, remaining.count - 1)].id]
+            }
         }
 
-        let ruleCount = browserManager.routingRuleCount(forBrowser: snapshot.browser)
-        let rulesNote = ruleCount == 0
-            ? ""
-            : " \(ruleCount) \(ruleCount == 1 ? "rule" : "rules") for it won't match until you undo."
+        let ruleCount = removed.reduce(0) { $0 + browserManager.routingRuleCount(forBrowser: $1.browser) }
+        let rulesNote = rulesNote(ruleCount: ruleCount, browserCount: removed.count)
+        let description = removed.count == 1 ? removed[0].browser.name : "\(removed.count) browsers"
         announce(StatusMessage(
-            text: "Removed \(snapshot.browser.name).\(rulesNote)",
-            removedBrowserID: snapshot.browser.id,
-            removedBrowserName: snapshot.browser.name
+            text: "Removed \(description).\(rulesNote)",
+            removedBrowserIDs: removed.map(\.browser.id),
+            restoredDescription: description
         ))
     }
 
     private func handleAdded(_ added: [BrowserConfig]) {
         guard let last = added.last else { return }
-        selection = last.id
+        selection = [last.id]
         let text = added.count == 1
             ? "Added \(last.name) with shortcut \(last.shortcutKey)."
             : "Added \(added.count) browsers."
