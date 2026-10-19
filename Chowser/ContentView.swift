@@ -795,6 +795,9 @@ struct ContentView: View {
             }
             .padding(24)
             .frame(width: 280)
+            // Without `.contain` the identifier is stamped onto every child and overwrites
+            // their own (iphoneQR.image, iphoneQR.urlText, iphoneQR.closeButton).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("iphoneQR.sheet")
             .task(id: url) {
                 // Favicon is a pure overlay inside the fixed-size QR square — fetching
