@@ -261,6 +261,11 @@ struct ContentView: View {
             .onChange(of: browserManager.currentURLPrivateModeRequested) {
                 syncPrivateModeRequest()
             }
+            .onChange(of: privateMode) {
+                // Once the user marks this link private, it stays out of history even if the
+                // picker is replaced or closed before they choose a browser.
+                if privateMode, !isPreview { browserManager.pickerPrivateIntent = true }
+            }
             .onChange(of: browserManager.pickerLayoutMode) {
                 loadLinkPreview(for: browserManager.currentURL)
                 prepareSelectionForPresentation()

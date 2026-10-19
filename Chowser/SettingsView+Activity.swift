@@ -83,6 +83,10 @@ extension SettingsView {
             },
             content: {
                 VStack(alignment: .leading, spacing: 20) {
+                    if browserManager.showsActivityUpgradeNotice, level == .statsOnly {
+                        activityUpgradeNote
+                    }
+
                     SettingsGroup("Activity data") {
                         SettingsRow(title: "Keep", subtitle: Self.activityPrivacyFooter) {
                             ActivityLevelControl(manager: browserManager)
@@ -208,6 +212,36 @@ extension SettingsView {
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(entry.outcome == .dismissed ? "settings.activity.row.dismissed" : "settings.activity.row")
+    }
+
+    /// One-time tip for installs that predate Link History (they start at "Stats only").
+    private var activityUpgradeNote: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Get back links you dismissed")
+                    .font(.callout.weight(.semibold))
+                Text("Chowser can keep a list of the links it handles, so a link you closed by accident is one click away. It's off for existing installs until you turn it on, and it never leaves this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("Turn On Full History") { browserManager.activityLevel = .full }
+                        .accessibilityIdentifier("settings.activity.upgradeNote.enable")
+                    Button("Not Now") { browserManager.showsActivityUpgradeNotice = false }
+                        .accessibilityIdentifier("settings.activity.upgradeNote.dismiss")
+                }
+                .controlSize(.small)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.activity.upgradeNote")
     }
 
     private func showPicker(for entry: LinkHistoryEntry) {

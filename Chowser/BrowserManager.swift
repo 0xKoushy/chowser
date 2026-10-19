@@ -240,6 +240,7 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         static let legacyRecentURLsKey = "recentURLs"
         static let activityLevelKey = "activityLevel"
         static let showRecentLinksInMenuKey = "showRecentLinksInMenu"
+        static let showsActivityUpgradeNoticeKey = "showsActivityUpgradeNotice"
     }
 
     static let shared = BrowserManager(defaults: makeDefaultStore(), immediateWrite: false, ownsActivityStores: true)
@@ -570,7 +571,16 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     var activityLevel: ActivityLevel = .full {
         didSet {
             defaults.set(activityLevel.rawValue, forKey: Constants.activityLevelKey)
+            if activityLevel == .full { showsActivityUpgradeNotice = false }
             applyActivityLevel()
+        }
+    }
+
+    /// Installs that predate Link History start at "Stats only" and get a one-time tip about
+    /// Full history, so nobody's full URLs are saved without them choosing it.
+    var showsActivityUpgradeNotice: Bool = false {
+        didSet {
+            defaults.set(showsActivityUpgradeNotice, forKey: Constants.showsActivityUpgradeNoticeKey)
         }
     }
 
@@ -629,14 +639,18 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             clearPersistedRoutingRules()
             defaults.removeObject(forKey: Constants.activityLevelKey)
             defaults.removeObject(forKey: Constants.showRecentLinksInMenuKey)
+            defaults.removeObject(forKey: Constants.showsActivityUpgradeNoticeKey)
         }
+        // Read before load(), which may persist a default browser list for a new install.
+        let predatesActivityLevel = defaults.object(forKey: Constants.activityLevelKey) == nil
+            && (OnboardingManager.hasCompletedOnboarding(in: defaults) || defaults.object(forKey: defaultsKey) != nil)
         clearLegacyRecentURLs()
 
         load()
         loadRoutingRules()
         loadRewriteRules()
         loadHiddenBundleIDs()
-        loadActivityLevel()
+        loadActivityLevel(predatesActivityLevel: predatesActivityLevel)
         loadPickerPreferences()
         if let fixture = AppEnvironment.pickerFixture {
             configuredBrowsers = fixture.browsers
@@ -895,8 +909,14 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
     }
 
-    private func loadActivityLevel() {
-        activityLevel = ActivityLevel(rawValue: defaults.string(forKey: Constants.activityLevelKey) ?? "") ?? .full
+    private func loadActivityLevel(predatesActivityLevel: Bool) {
+        if predatesActivityLevel {
+            activityLevel = .statsOnly
+            showsActivityUpgradeNotice = true
+        } else {
+            activityLevel = ActivityLevel(rawValue: defaults.string(forKey: Constants.activityLevelKey) ?? "") ?? .full
+            showsActivityUpgradeNotice = defaults.bool(forKey: Constants.showsActivityUpgradeNoticeKey)
+        }
         showRecentLinksInMenu = defaults.object(forKey: Constants.showRecentLinksInMenuKey) as? Bool ?? true
     }
 

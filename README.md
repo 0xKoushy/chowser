@@ -115,7 +115,7 @@ The server only listens on your Mac. It is not reachable from the network.
 
 - Shortlink resolution and link preview make network requests, so both are **off by default**. Turn them on in **Settings → Behavior**.
 - **Link history stays on your Mac.** It is saved as a file in `~/Library/Application Support/Chowser/` (readable only by you), capped at 500 links and 30 days, and not included in Export All. Private-mode opens are never recorded. Chowser never sends usage data anywhere.
-- **Activity level** (Settings → Privacy): Full history (default), Stats only (keeps only the website name, not the path or query), or Off (records nothing). Lowering the level asks first, then deletes the data the new level doesn't allow. Off also deletes the domain click counts behind picker hints and suggested rules. **Clear History** is on the Activity page.
+- **Activity level** (Settings → Privacy): Full history (the default for new installs; installs updated from 3.9.13 or earlier start at Stats only until you turn it on), Stats only (keeps only the website name, not the path or query), or Off (records nothing). Lowering the level asks first, then deletes the data the new level doesn't allow. Off also deletes the domain click counts behind picker hints and suggested rules. **Clear History** is on the Activity page.
 - Rewrite catalogs and native-app directories are signed (Ed25519) and verified against a public key pinned in the app. Chowser downloads the catalog files only. The URLs you click are never sent to the catalog host.
 
 ## Build from source

@@ -160,4 +160,32 @@ struct LinkHistoryTests {
         let route = manager.resolvedRoute(for: URL(string: "https://docs.example.com/page")!)
         #expect(route?.browser.bundleId == firefox.bundleId)
     }
+
+    @Test("Clearing history also deletes a set-aside unreadable file")
+    func clearRemovesCorruptFile() throws {
+        let history = makeHistory()
+        try FileManager.default.createDirectory(at: history.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: history.fileURL)
+        let reloaded = LinkHistory(fileURL: history.fileURL)
+        reloaded.clear()
+        #expect(!FileManager.default.fileExists(atPath: reloaded.corruptFileURL.path))
+    }
+
+    @Test("Existing installs start at Stats only with the upgrade tip; new installs at Full")
+    func upgradeDefaults() throws {
+        let existing = UserDefaults(suiteName: "com.chowser.tests.\(UUID().uuidString)")!
+        existing.set(try JSONEncoder().encode([BrowserConfig(name: "Safari", bundleId: "com.apple.Safari", shortcutKey: "1")]),
+                     forKey: "configuredBrowsers")
+        let upgraded = BrowserManager(defaults: existing)
+        #expect(upgraded.activityLevel == .statsOnly)
+        #expect(upgraded.showsActivityUpgradeNotice)
+
+        upgraded.activityLevel = .full
+        #expect(!upgraded.showsActivityUpgradeNotice)
+        #expect(BrowserManager(defaults: existing).activityLevel == .full)
+
+        let fresh = BrowserManager(defaults: UserDefaults(suiteName: "com.chowser.tests.\(UUID().uuidString)")!)
+        #expect(fresh.activityLevel == .full)
+        #expect(!fresh.showsActivityUpgradeNotice)
+    }
 }

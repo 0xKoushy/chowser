@@ -712,6 +712,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             menu.addItem(NSMenuItem.separator())
         }
         
+        // One-time tip for installs that predate Link History (they start at "Stats only").
+        if BrowserManager.shared.activityLevel == .statsOnly, BrowserManager.shared.showsActivityUpgradeNotice {
+            let tipItem = NSMenuItem(title: "Turn On Link History…", action: #selector(showActivity), keyEquivalent: "")
+            tipItem.target = self
+            tipItem.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)
+            tipItem.toolTip = "Keep a list of handled links so you can reopen ones you dismissed"
+            menu.addItem(tipItem)
+        }
+
         // Recent Links and Reopen need readable URLs, so they only exist at "Full history".
         if BrowserManager.shared.activityLevel == .full, let lastEntry = LinkHistory.shared.entries.first {
             // Toggle: when on, the last links sit right in the menu instead of a submenu.

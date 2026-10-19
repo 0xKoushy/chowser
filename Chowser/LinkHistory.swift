@@ -79,6 +79,7 @@ final class LinkHistory {
 
         if AppEnvironment.shouldClearDataOnLaunch {
             try? FileManager.default.removeItem(at: fileURL)
+            try? FileManager.default.removeItem(at: corruptFileURL)
         }
         load()
     }
@@ -115,6 +116,7 @@ final class LinkHistory {
         case .full:
             break
         case .statsOnly:
+            try? FileManager.default.removeItem(at: corruptFileURL)
             entries = entries.compactMap { entry in
                 Self.reducedToHost(entry.url).map {
                     LinkHistoryEntry(id: entry.id, date: entry.date, url: $0, sourceBundleID: entry.sourceBundleID, outcome: entry.outcome)
@@ -131,6 +133,13 @@ final class LinkHistory {
         pendingSave = nil
         entries = []
         try? FileManager.default.removeItem(at: fileURL)
+        try? FileManager.default.removeItem(at: corruptFileURL)
+    }
+
+    /// Where an unreadable history file is kept for inspection. It holds full URLs, so it is
+    /// deleted along with the history whenever the level drops or the history is cleared.
+    var corruptFileURL: URL {
+        fileURL.deletingPathExtension().appendingPathExtension("corrupt.json")
     }
 
     func flushPendingSave() {
@@ -167,9 +176,8 @@ final class LinkHistory {
         guard let data = try? Data(contentsOf: fileURL) else { return }
         guard let decoded = try? Self.decoder.decode([LinkHistoryEntry].self, from: data) else {
             // Keep an unreadable file for inspection instead of overwriting it on the next record.
-            let aside = fileURL.deletingPathExtension().appendingPathExtension("corrupt.json")
-            try? FileManager.default.removeItem(at: aside)
-            try? FileManager.default.moveItem(at: fileURL, to: aside)
+            try? FileManager.default.removeItem(at: corruptFileURL)
+            try? FileManager.default.moveItem(at: fileURL, to: corruptFileURL)
             AppLogger.error("LinkHistory", "History file could not be read; moved aside")
             return
         }
