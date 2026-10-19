@@ -57,11 +57,21 @@ final class RulesEditorModel {
 
     let manager: BrowserManager
 
-    var selection: UUID? {
+    /// Every selected row. Rows that leave the selection have their drafts committed or
+    /// discarded, exactly as when a single selection moves.
+    var selectedIDs: Set<UUID> = [] {
         didSet {
-            guard oldValue != selection, let oldValue else { return }
-            endEditing(oldValue)
+            for id in oldValue.subtracting(selectedIDs) {
+                endEditing(id)
+            }
         }
+    }
+
+    /// The single rule the inspector edits: the only selected row, or nil when nothing or
+    /// several rows are selected. Setting it replaces the whole selection.
+    var selection: UUID? {
+        get { selectedIDs.count == 1 ? selectedIDs.first : nil }
+        set { selectedIDs = newValue.map { [$0] } ?? [] }
     }
 
     private(set) var drafts: [UUID: BrowserRoutingRule] = [:]
@@ -223,24 +233,31 @@ final class RulesEditorModel {
         focusPatternRequest = rule.id
     }
 
-    /// Deletes immediately (no confirmation). Stored rules get an undo that restores
-    /// them at their original index. Selection moves to the next row, else the previous.
+    /// Deletes immediately (confirmation is the caller's job). Stored rules get one undo
+    /// step that restores them at their original indices. Selection moves to the row that
+    /// slid into the first deleted row's place.
     func delete(_ id: UUID, undoManager: UndoManager?) {
+        delete(ids: [id], undoManager: undoManager)
+    }
+
+    func delete(ids: Set<UUID>, undoManager: UndoManager?) {
         let before = rows
-        guard let position = before.firstIndex(where: { $0.id == id }) else { return }
-        let neighbor: UUID? = before.indices.contains(position + 1)
-            ? before[position + 1].id
-            : (position > 0 ? before[position - 1].id : nil)
+        guard let firstPosition = before.firstIndex(where: { ids.contains($0.id) }) else { return }
 
-        if let pending = pendingNewRule, pending.rule.id == id {
+        var storedIDs = ids
+        if let pending = pendingNewRule, ids.contains(pending.rule.id) {
             pendingNewRule = nil
-        } else {
-            drafts[id] = nil
-            manager.deleteRoutingRule(id: id, undoManager: undoManager)
+            storedIDs.remove(pending.rule.id)
         }
+        for id in storedIDs { drafts[id] = nil }
+        manager.deleteRoutingRules(ids: storedIDs, undoManager: undoManager)
 
-        if selection == id || selection == nil {
-            selection = neighbor
+        selectedIDs.subtract(ids)
+        if selectedIDs.isEmpty {
+            let remaining = before.filter { !ids.contains($0.id) }
+            if !remaining.isEmpty {
+                selectedIDs = [remaining[min(firstPosition, remaining.count - 1)].id]
+            }
         }
     }
 

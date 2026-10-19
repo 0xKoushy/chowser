@@ -483,6 +483,43 @@ final class ChowserUITests: XCTestCase {
         ui.assertSettingsVisible()
     }
 
+    func testCommandClickSelectsTwoBrowsersAndRemovingThemAsksFirst() throws {
+        let ui = ChowserAppDriver(app: app)
+
+        ui.openSettings()
+        ui.assertSettingsVisible()
+
+        while ui.browserRows.count < 3 {
+            let before = ui.browserRows.count
+            ui.openAddBrowserSheet()
+            ui.addFirstBrowserOption()
+            if ui.browserRows.count == before { break }
+        }
+        let startCount = ui.browserRows.count
+        try XCTSkipIf(startCount < 3, "Need at least three browsers to remove two and keep one.")
+
+        ui.browserRows.element(boundBy: 0).click()
+        XCUIElement.perform(withKeyModifiers: .command) {
+            ui.browserRows.element(boundBy: 1).click()
+        }
+
+        let summary = app.descendants(matching: .any).matching(identifier: "settings.browsers.multiSelectSummary").firstMatch
+        XCTAssertTrue(summary.waitForExistence(timeout: 5), "Selecting two browsers should show the multi-select summary.")
+
+        ui.browserRemoveButton.click()
+
+        let confirm = app.buttons["settings.confirmDelete.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Removing should ask for confirmation first.")
+        XCTAssertEqual(ui.browserRows.count, startCount, "Nothing should be removed before confirming.")
+
+        confirm.click()
+
+        let predicate = NSPredicate(format: "count == %d", startCount - 2)
+        let removed = XCTNSPredicateExpectation(predicate: predicate, object: ui.browserRows)
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed, "Both selected browsers should be gone.")
+        ui.assertSettingsVisible()
+    }
+
     func testResetToFreshSetupRestoresFirstLaunchState() throws {
         let ui = ChowserAppDriver(app: app)
 

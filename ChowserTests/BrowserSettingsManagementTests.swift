@@ -123,6 +123,50 @@ struct BrowserSettingsManagementTests {
         #expect(manager.configuredBrowsers.map(\.id) == [chrome.id, firefox.id])
     }
 
+    @Test("Batch removal is one undo step that restores every browser at its original index")
+    @MainActor
+    func batchRemoveUndoesInOneStep() {
+        let manager = makeManager()
+        let browsers = [
+            BrowserConfig(name: "Safari", bundleId: "com.apple.Safari", shortcutKey: "1"),
+            BrowserConfig(name: "Chrome", bundleId: "com.google.Chrome", shortcutKey: "2"),
+            BrowserConfig(name: "Firefox", bundleId: "org.mozilla.firefox", shortcutKey: "3"),
+            BrowserConfig(name: "Arc", bundleId: "company.thebrowser.Browser", shortcutKey: "4"),
+            BrowserConfig(name: "Brave", bundleId: "com.brave.Browser", shortcutKey: "5"),
+        ]
+        manager.configuredBrowsers = browsers
+        let undoManager = UndoManager()
+        undoManager.groupsByEvent = false
+
+        undoManager.beginUndoGrouping()
+        let removed = manager.removeBrowsers(ids: [browsers[1].id, browsers[3].id, UUID()], undoManager: undoManager)
+        undoManager.endUndoGrouping()
+
+        #expect(removed.map(\.index) == [1, 3])
+        #expect(manager.configuredBrowsers.map(\.id) == [browsers[0].id, browsers[2].id, browsers[4].id])
+        #expect(undoManager.undoActionName == "Remove Browsers")
+
+        undoManager.undo()
+        #expect(manager.configuredBrowsers == browsers)
+        #expect(!undoManager.canUndo)
+
+        undoManager.redo()
+        #expect(manager.configuredBrowsers.map(\.id) == [browsers[0].id, browsers[2].id, browsers[4].id])
+    }
+
+    @Test("Removing a batch with no matching IDs changes nothing and registers no undo")
+    @MainActor
+    func batchRemoveWithUnknownIDs() {
+        let manager = makeManager()
+        let safari = BrowserConfig(name: "Safari", bundleId: "com.apple.Safari", shortcutKey: "1")
+        manager.configuredBrowsers = [safari]
+        let undoManager = UndoManager()
+
+        #expect(manager.removeBrowsers(ids: [UUID()], undoManager: undoManager).isEmpty)
+        #expect(manager.configuredBrowsers == [safari])
+        #expect(!undoManager.canUndo)
+    }
+
     @Test("Restoring after the list shrank clamps the index")
     @MainActor
     func restoreClampsIndex() {
