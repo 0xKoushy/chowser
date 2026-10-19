@@ -48,6 +48,10 @@ struct ContentView: View {
     @State private var presentedAt = ProcessInfo.processInfo.systemUptime
     @State private var focusObserver: NSObjectProtocol?
     @State private var keyEventMonitor: Any?
+    /// Set while a focus loss inside the grace period left the picker up: the next click in
+    /// another app dismisses it. The picker doesn't take key status back, so typing keeps
+    /// going to the app the user clicked into.
+    @State private var graceClickMonitor: Any?
     @State private var showingConfigureRule = false
     @AppStorage("pickerHintOpenCount") private var pickerHintOpenCount = 0
     private static let pickerHintOpens = 5
@@ -301,12 +305,12 @@ struct ContentView: View {
                             // Key window being one of the panel's children (e.g. a
                             // popover window) also counts as still-focused.
                             if let key = NSApp.keyWindow, w.childWindows?.contains(key) == true { return }
-                            // Too soon after appearing: keep the picker and take key status
-                            // back, so the next click outside dismisses it normally.
+                            // Too soon after appearing: leave the picker up (without taking key
+                            // status back) until the next deliberate click elsewhere.
                             guard Self.shouldDismissOnResignKey(
                                 elapsedSincePresented: ProcessInfo.processInfo.systemUptime - presentedAt
                             ) else {
-                                w.makeKey()
+                                installGraceClickMonitor()
                                 return
                             }
                             dismissPicker()
@@ -327,6 +331,7 @@ struct ContentView: View {
             focusObserver = nil
         }
         removeKeyEventMonitor()
+        removeGraceClickMonitor()
         dismissTask?.cancel()
         dismissTask = nil
         previewTask?.cancel()
@@ -1576,8 +1581,10 @@ struct ContentView: View {
     /// - Parameter recordDismissal: false when the link was just opened, so it isn't also
     ///   logged as dismissed.
     private func dismissPicker(recordDismissal: Bool = true) {
+        removeGraceClickMonitor()
+        // While a short link is still resolving, the routing task records the outcome.
         if recordDismissal, !isPreview, !privateMode, !browserManager.pickerPrivateIntent,
-           let url = browserManager.currentURL {
+           !browserManager.isResolvingIncomingURL, let url = browserManager.currentURL {
             LinkHistory.shared.record(url: url, source: browserManager.pickerSourceAppBundleId, outcome: .dismissed)
         }
         // Reset without animation: the panel is ordered out right after, and a transition
@@ -1692,6 +1699,23 @@ struct ContentView: View {
         removeKeyEventMonitor()
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             self.handlePickerKeyDown(event) ? nil : event
+        }
+    }
+
+    private func installGraceClickMonitor() {
+        guard graceClickMonitor == nil else { return }
+        // Global monitors only see clicks in other apps, so clicking the picker itself
+        // doesn't trigger this; it becomes key and the normal focus-loss path takes over.
+        graceClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { _ in
+            removeGraceClickMonitor()
+            dismissPicker()
+        }
+    }
+
+    private func removeGraceClickMonitor() {
+        if let monitor = graceClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            graceClickMonitor = nil
         }
     }
 

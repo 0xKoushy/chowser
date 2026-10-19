@@ -7,14 +7,15 @@ All notable changes to Chowser are documented here.
 ### Added
 - **Link history.** Chowser keeps a local log of the links it handles: time, source app, and whether the link opened in a browser, opened in a native app, or was dismissed. It lives in **Settings → Activity** with All / Dismissed / Auto-routed filters, host search, and per-link Open, Open in…, Copy URL, and Create Rule. A 7-day summary shows link count, share auto-routed, dismissed links, and top apps and domains.
 - **Never lose a dismissed link.** If a script or coding agent runs `open https://…` and you click away from the picker, the link is still in Activity. `chowser://reopen` runs the last dismissed link through routing again.
-- **Recent links in the menu bar.** "Show Recent Links" lists the last 5 links with an outcome icon; hold ⌥ to create a rule for a host. "Show All…" opens Activity. "Reopen Last Link In" sends the last link to any browser; hold ⌥ to always open that host in the browser.
+- **Recent links in the menu bar.** "Show Recent Links" lists the last 5 links with an outcome icon; hold ⌥ to create a rule for a host. "Show All…" opens Activity. "Reopen Last Link In" sends the last link to any browser; hold ⌥ to always open that host there (the rule goes to the top of your list so it wins).
 - **Activity level** in Settings → Privacy: Full history, Stats only (host only, no path or query), or Off. Lowering it asks first, then deletes data the new level doesn't allow. The local API has an `activityLevel` setting too.
 - **Delete several browsers or rules at once.** Cmd-click or Shift-click rows in Settings → Browsers or Rules, then remove them together. Chowser asks first, and one ⌘Z brings them all back in their original places.
 
 ### Changed
 - **The "Recent URLs" submenu is replaced** by Recent Links and Reopen Last Link In. Both appear only at Full history.
 - **Domain click counts respect the Off switch.** They used to have no off switch; Off now deletes them and stops counting.
-- **The picker ignores focus loss in its first 400 ms**, so a click that lands as it appears no longer dismisses it. Escape still closes it immediately.
+- **The picker ignores focus loss in its first 400 ms**, so a click that lands as it appears no longer dismisses it. It stays up without taking your typing; the next click elsewhere or Escape closes it.
+- **Reset to Fresh Setup also clears link history and click counts.**
 - History is stored in a private file (0600), holds at most 500 links for 30 days, skips private-mode opens, and is not part of Export All.
 
 ## [3.9.13] - 2026-10-12

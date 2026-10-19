@@ -242,7 +242,7 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         static let showRecentLinksInMenuKey = "showRecentLinksInMenu"
     }
 
-    static let shared = BrowserManager(defaults: makeDefaultStore(), immediateWrite: false)
+    static let shared = BrowserManager(defaults: makeDefaultStore(), immediateWrite: false, ownsActivityStores: true)
 
     struct ImportSummary: Equatable {
         var added: Int = 0
@@ -453,6 +453,13 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     /// The link in the picker was requested in private mode. Kept even where the build can't
     /// launch privately, so its history entry is skipped either way.
     var pickerPrivateIntent = false
+
+    /// Records the link currently waiting in the picker as dismissed, because a newer
+    /// incoming link is about to take its place.
+    func recordReplacedPickerLink() {
+        guard let url = currentURL, !pickerPrivateIntent else { return }
+        LinkHistory.shared.record(url: url, source: pickerSourceAppBundleId, outcome: .dismissed)
+    }
     var lastOpenedBrowserBundleIDForTesting: String?
     @ObservationIgnored private var pendingPrivateModeURL: URL?
 
@@ -602,7 +609,17 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     @ObservationIgnored private var pendingRewritesSave: DispatchWorkItem?
     @ObservationIgnored private var temporaryRouteExpirationTimer: Timer?
 
-    init(defaults: UserDefaults = AppEnvironment.makeDefaultStore(), defaultsKey: String = "configuredBrowsers", immediateWrite: Bool = true) {
+    /// Only the app's shared manager drives `LinkHistory.shared` and `DomainFrequencyTracker.shared`;
+    /// other instances (tests) must not wipe or re-level them.
+    @ObservationIgnored private let ownsActivityStores: Bool
+
+    init(
+        defaults: UserDefaults = AppEnvironment.makeDefaultStore(),
+        defaultsKey: String = "configuredBrowsers",
+        immediateWrite: Bool = true,
+        ownsActivityStores: Bool = false
+    ) {
+        self.ownsActivityStores = ownsActivityStores
         self.defaults = defaults
         self.defaultsKey = defaultsKey
         self.immediateWrite = immediateWrite
@@ -884,6 +901,7 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     }
 
     private func applyActivityLevel() {
+        guard ownsActivityStores else { return }
         LinkHistory.shared.setLevel(activityLevel)
         DomainFrequencyTracker.shared.isRecordingEnabled = activityLevel != .off
         if activityLevel == .off {
@@ -922,6 +940,11 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         currentURL = nil
         nativeAppApprovals = [:]
         hasCompletedOnboarding = false
+        activityLevel = .full
+        if ownsActivityStores {
+            LinkHistory.shared.clear()
+            DomainFrequencyTracker.shared.clear()
+        }
 
         if launchAtLogin {
             launchAtLogin = false
@@ -1374,9 +1397,21 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             existing.browserBundleId = browser.bundleId
             existing.profile = browser.profile
             existing.isEnabled = true
-            return updateRule(existing)
+            existing.usePrivateMode = false
+            let result = updateRule(existing)
+            if case .success(let rule) = result { moveRuleToTop(rule.id) }
+            return result
         }
-        return addRoutingRule(name: host, hostPattern: host, pathPrefix: nil, browserBundleId: browser.bundleId, profile: browser.profile)
+        let result = addRoutingRule(name: host, hostPattern: host, pathPrefix: nil, browserBundleId: browser.bundleId, profile: browser.profile)
+        if case .success(let rule) = result { moveRuleToTop(rule.id) }
+        return result
+    }
+
+    /// Rules are first-match, so "always" only holds if this rule is checked before any
+    /// broader rule (a wildcard, path or source-app rule) that also matches the host.
+    private func moveRuleToTop(_ id: UUID) {
+        guard let index = routingRules.firstIndex(where: { $0.id == id }), index > 0 else { return }
+        routingRules.insert(routingRules.remove(at: index), at: 0)
     }
 
     func removeRoutingRule(id: UUID) {
@@ -2576,8 +2611,8 @@ struct BrowserFallbackPolicy: Codable, Equatable {
 
         recordHistory()
 
-        // Record frequency for suggestions
-        if let domain = url.host {
+        // Record frequency for suggestions (never for private opens)
+        if !(usePrivateMode || privateIntent), let domain = url.host {
             DomainFrequencyTracker.shared.record(domain: domain.lowercased(), browserBundleID: bundleId)
         }
     }

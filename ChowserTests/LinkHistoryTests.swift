@@ -108,4 +108,56 @@ struct LinkHistoryTests {
         tracker.clear()
         #expect(tracker.stats(for: "a.com").isEmpty)
     }
+
+    @Test("Dismissing the same link twice in a row keeps one entry")
+    func repeatedDismissalCollapses() {
+        let history = makeHistory()
+        history.record(url: sample, source: nil, outcome: .dismissed)
+        history.record(url: sample, source: nil, outcome: .dismissed)
+        #expect(history.entries.count == 1)
+    }
+
+    @Test("A dismissed link opened later is no longer the one to reopen")
+    func lastDismissedSkipsHandledLink() {
+        let history = makeHistory()
+        history.record(url: sample, source: nil, outcome: .dismissed)
+        history.record(url: sample, source: nil, outcome: browserOutcome)
+        #expect(history.lastDismissed == nil)
+    }
+
+    @Test("A future-dated entry doesn't stay on top as the last link")
+    func keepsRecordingOrder() {
+        let history = makeHistory()
+        history.record(url: URL(string: "https://skewed.example")!, source: nil, outcome: browserOutcome,
+                       date: Date().addingTimeInterval(24 * 3600))
+        history.record(url: sample, source: nil, outcome: browserOutcome)
+        #expect(history.entries.first?.url == sample)
+    }
+
+    @Test("An unreadable history file is moved aside, not overwritten")
+    func corruptFileMovedAside() throws {
+        let history = makeHistory()
+        try FileManager.default.createDirectory(at: history.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: history.fileURL)
+        let reloaded = LinkHistory(fileURL: history.fileURL)
+        #expect(reloaded.entries.isEmpty)
+        let aside = history.fileURL.deletingPathExtension().appendingPathExtension("corrupt.json")
+        #expect(FileManager.default.fileExists(atPath: aside.path))
+    }
+
+    @Test("Always open puts the rule ahead of a broader rule that also matches")
+    func alwaysOpenBeatsWildcard() {
+        let defaults = UserDefaults(suiteName: "com.chowser.tests.\(UUID().uuidString)")!
+        let manager = BrowserManager(defaults: defaults)
+        let chrome = BrowserConfig(name: "Chrome", bundleId: "com.google.Chrome", shortcutKey: "1")
+        let firefox = BrowserConfig(name: "Firefox", bundleId: "org.mozilla.firefox", shortcutKey: "2")
+        manager.configuredBrowsers = [chrome, firefox]
+        manager.routingRules = []
+        manager.addRoutingRule(name: "Example", hostPattern: "*.example.com", pathPrefix: nil, browserBundleId: chrome.bundleId)
+
+        manager.alwaysOpen(host: "docs.example.com", in: firefox)
+
+        let route = manager.resolvedRoute(for: URL(string: "https://docs.example.com/page")!)
+        #expect(route?.browser.bundleId == firefox.bundleId)
+    }
 }

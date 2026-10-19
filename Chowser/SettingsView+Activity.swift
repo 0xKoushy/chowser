@@ -93,13 +93,13 @@ extension SettingsView {
                     if level == .full {
                         activityHistoryGroup(entries: history.entries)
                         activityStatsGroup(entries: history.entries)
+                    } else if level == .statsOnly {
+                        activityStatsGroup(entries: history.entries)
                     } else {
                         EmptyStateView(
                             icon: "clock.arrow.circlepath",
-                            title: level == .off ? "History is off" : "Only stats are kept",
-                            message: level == .off
-                                ? "Chowser isn't recording links. Choose Full history above to turn it back on."
-                                : "Chowser keeps website names only, so there are no links to list. Choose Full history above to see them."
+                            title: "History is off",
+                            message: "Chowser isn't recording links. Choose Full history above to turn it back on."
                         )
                         .frame(height: 180)
                         .accessibilityIdentifier("settings.activity.emptyState")
@@ -211,7 +211,10 @@ extension SettingsView {
     }
 
     private func showPicker(for entry: LinkHistoryEntry) {
+        browserManager.recordReplacedPickerLink()
         browserManager.pickerSourceAppBundleId = entry.sourceBundleID
+        browserManager.pickerPrivateIntent = false
+        browserManager.currentURLPrivateModeRequested = false
         browserManager.currentURL = entry.url
         AppDelegate.shared?.showPickerForCurrentURL()
     }

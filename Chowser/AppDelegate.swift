@@ -386,6 +386,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // (so the picker shows again). Usage: open "chowser://reopen"
         if url.scheme == "chowser", url.host == "reopen" {
             if BrowserManager.shared.activityLevel == .full, let entry = LinkHistory.shared.lastDismissed {
+                // Route as the app that originally sent the link, not whoever sent `reopen`,
+                // so source-app rules behave as they would have the first time.
+                BrowserManager.shared.currentSourceAppBundleId = entry.sourceBundleID
                 self.application(application, open: [entry.url])
             }
             return
@@ -427,6 +430,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 && (rewrittenURL.host.map { manager.isAllowedShortenerHost($0) } ?? false)
 
             if willAwaitShortlink {
+                manager.recordReplacedPickerLink()
                 manager.currentRewriteTrace = rewriteResult.steps
                 manager.pickerSourceAppBundleId = sourceAppBundleId
                 manager.pickerPrivateIntent = incomingIntent.privateModeRequested
@@ -444,6 +448,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             await MainActor.run {
                 manager.isResolvingIncomingURL = false
                 manager.currentRewriteTrace = rewriteResult.steps
+                // A link already waiting in the picker is about to be replaced; keep it in
+                // history. (With a short link, the picker already holds this same link.)
+                if !willAwaitShortlink { manager.recordReplacedPickerLink() }
                 manager.currentURL = cleanedURL
 
                 // Pass the source app captured at the top of this Task explicitly — reading
@@ -481,7 +488,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                         usePrivateMode: usePrivateMode,
                         sourceApp: sourceAppBundleId,
                         viaRule: rule?.name,
-                        privateIntent: incomingIntent.privateModeRequested
+                        // A rule marked private counts even where this build can't launch privately.
+                        privateIntent: incomingIntent.privateModeRequested || (rule?.usePrivateMode ?? false)
                     )
                     if willAwaitShortlink { self.closePicker() }
                     return
@@ -1072,6 +1080,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     func closePicker() {
         pickerPanel?.orderOut(nil)
         BrowserManager.shared.currentURL = nil
+        BrowserManager.shared.pickerSourceAppBundleId = nil
+        BrowserManager.shared.pickerPrivateIntent = false
     }
 
     func showPickerForCurrentURL() {

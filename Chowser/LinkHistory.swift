@@ -94,6 +94,10 @@ final class LinkHistory {
         guard !isPrivate, level != .off else { return }
         let storedURL = level == .full ? url : Self.reducedToHost(url)
         guard let storedURL else { return }
+        // The same link dismissed again (e.g. a reopen that was ignored) adds nothing new.
+        if outcome == .dismissed, let last = entries.first, last.outcome == .dismissed, last.url == storedURL {
+            return
+        }
 
         entries.insert(
             LinkHistoryEntry(id: UUID(), date: date, url: storedURL, sourceBundleID: source, outcome: outcome),
@@ -136,9 +140,12 @@ final class LinkHistory {
         save()
     }
 
-    /// The most recent link the user lost, for `chowser://reopen`.
+    /// The most recent link the user lost, for `chowser://reopen`. Nil when that link was
+    /// opened again after being dismissed.
     var lastDismissed: LinkHistoryEntry? {
-        entries.first { $0.outcome == .dismissed }
+        guard let index = entries.firstIndex(where: { $0.outcome == .dismissed }) else { return nil }
+        let entry = entries[index]
+        return entries[..<index].contains { $0.url == entry.url } ? nil : entry
     }
 
     static func reducedToHost(_ url: URL) -> URL? {
@@ -149,27 +156,29 @@ final class LinkHistory {
         return components.url
     }
 
+    /// Entries stay in recording order (newest first); sorting by date would let one entry
+    /// stamped by a wrong clock stick at the top as "the last link".
     private func prune(now: Date) {
         let cutoff = now.addingTimeInterval(-Self.maxAge)
-        entries = Array(
-            entries
-                .filter { $0.date >= cutoff }
-                .sorted { $0.date > $1.date }
-                .prefix(Self.maxEntries)
-        )
+        entries = Array(entries.filter { $0.date >= cutoff }.prefix(Self.maxEntries))
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? Self.decoder.decode([LinkHistoryEntry].self, from: data) else {
+        guard let data = try? Data(contentsOf: fileURL) else { return }
+        guard let decoded = try? Self.decoder.decode([LinkHistoryEntry].self, from: data) else {
+            // Keep an unreadable file for inspection instead of overwriting it on the next record.
+            let aside = fileURL.deletingPathExtension().appendingPathExtension("corrupt.json")
+            try? FileManager.default.removeItem(at: aside)
+            try? FileManager.default.moveItem(at: fileURL, to: aside)
+            AppLogger.error("LinkHistory", "History file could not be read; moved aside")
             return
         }
-        entries = decoded
+        entries = decoded.sorted { $0.date > $1.date }
         prune(now: Date())
     }
 
     private func save() {
-        guard let data = try? Self.encoder.encode(entries) else { return }
+        guard level != .off, let data = try? Self.encoder.encode(entries) else { return }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: fileURL, options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
@@ -178,10 +187,12 @@ final class LinkHistory {
     private func scheduleSave() {
         guard !immediateWrite else { save(); return }
         pendingSave?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
-                self?.pendingSave = nil
-                self?.save()
+        var item: DispatchWorkItem!
+        item = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.pendingSave === item else { return }
+                self.pendingSave = nil
+                self.save()
             }
         }
         pendingSave = item
