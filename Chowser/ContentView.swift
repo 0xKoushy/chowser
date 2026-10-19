@@ -45,11 +45,21 @@ struct ContentView: View {
     @State private var quickOverflowPresented = false
     @State private var quickOverflowSelectedBrowserId: UUID?
     @State private var dismissTask: DispatchWorkItem?
+    @State private var presentedAt = ProcessInfo.processInfo.systemUptime
     @State private var focusObserver: NSObjectProtocol?
     @State private var keyEventMonitor: Any?
     @State private var showingConfigureRule = false
     @AppStorage("pickerHintOpenCount") private var pickerHintOpenCount = 0
     private static let pickerHintOpens = 5
+
+    /// A click elsewhere in the first moments after the picker appears is almost always the
+    /// user's own click landing as the picker steals focus, not a decision to leave.
+    static let resignKeyGracePeriod: TimeInterval = 0.4
+
+    /// Whether losing key status should dismiss the picker. Escape is unaffected.
+    static func shouldDismissOnResignKey(elapsedSincePresented: TimeInterval) -> Bool {
+        elapsedSincePresented >= resignKeyGracePeriod
+    }
     @State private var urlCopied = false
     @State private var privateMode = false
     @State private var isUnshortening = false
@@ -234,6 +244,7 @@ struct ContentView: View {
             .onAppear(perform: handleAppear)
             .onDisappear(perform: handleDisappear)
             .onChange(of: browserManager.currentURL) { oldURL, newURL in
+                if oldURL == nil, newURL != nil { presentedAt = ProcessInfo.processInfo.systemUptime }
                 if !isPreview, oldURL == nil, newURL != nil, pickerHintOpenCount <= Self.pickerHintOpens {
                     pickerHintOpenCount += 1
                 }
@@ -257,6 +268,7 @@ struct ContentView: View {
     }
 
     private func handleAppear() {
+        presentedAt = ProcessInfo.processInfo.systemUptime
         syncPrivateModeRequest()
         runningBundleIDs = BrowserManager.runningBrowserBundleIDs()
         loadLinkPreview(for: browserManager.currentURL)
@@ -289,6 +301,14 @@ struct ContentView: View {
                             // Key window being one of the panel's children (e.g. a
                             // popover window) also counts as still-focused.
                             if let key = NSApp.keyWindow, w.childWindows?.contains(key) == true { return }
+                            // Too soon after appearing: keep the picker and take key status
+                            // back, so the next click outside dismisses it normally.
+                            guard Self.shouldDismissOnResignKey(
+                                elapsedSincePresented: ProcessInfo.processInfo.systemUptime - presentedAt
+                            ) else {
+                                w.makeKey()
+                                return
+                            }
                             dismissPicker()
                         }
                     }
@@ -1550,7 +1570,12 @@ struct ContentView: View {
 
     // MARK: - Dismiss
 
-    private func dismissPicker() {
+    /// - Parameter recordDismissal: false when the link was just opened, so it isn't also
+    ///   logged as dismissed.
+    private func dismissPicker(recordDismissal: Bool = true) {
+        if recordDismissal, !isPreview, !privateMode, let url = browserManager.currentURL {
+            LinkHistory.shared.record(url: url, source: browserManager.pickerSourceAppBundleId, outcome: .dismissed)
+        }
         // Reset without animation: the panel is ordered out right after, and a transition
         // left running off-screen could show a stale frame on a quick reopen.
         var transaction = Transaction()
@@ -1577,6 +1602,7 @@ struct ContentView: View {
         browserManager.currentRewriteTrace = []
         phoneHandoffAdapter.stop()
         browserManager.currentURL = nil
+        browserManager.pickerSourceAppBundleId = nil
     }
 
     // MARK: - Browser Action
@@ -1584,8 +1610,15 @@ struct ContentView: View {
     private func openUrl(with browser: BrowserConfig, usePrivateMode: Bool = false) {
         guard let url = browserManager.currentURL else { return }
         let effectiveUsePrivateMode = supportsPrivateLaunchMode && usePrivateMode
-        if !isPreview { dismissPicker() }
-        browserManager.open(url: url, withBrowserBundleID: browser.bundleId, profile: browser.profile, usePrivateMode: effectiveUsePrivateMode)
+        let sourceApp = browserManager.pickerSourceAppBundleId
+        if !isPreview { dismissPicker(recordDismissal: false) }
+        browserManager.open(
+            url: url,
+            withBrowserBundleID: browser.bundleId,
+            profile: browser.profile,
+            usePrivateMode: effectiveUsePrivateMode,
+            sourceApp: sourceApp
+        )
     }
 
     private func requestedPrivateMode(modifierFlags: NSEvent.ModifierFlags) -> Bool {

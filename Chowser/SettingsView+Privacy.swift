@@ -38,6 +38,16 @@ extension SettingsView {
                     .disabled(!manager.networkLookupsEnabled)
                     .opacity(manager.networkLookupsEnabled ? 1 : 0.55)
 
+                    SettingsGroup("Activity") {
+                        SettingsRow(
+                            title: "Keep activity data",
+                            subtitle: "Full history lists the links you open. Stats only keeps website names. Off records nothing and deletes what's stored. \(Self.activityPrivacyFooter)"
+                        ) {
+                            ActivityLevelControl(manager: manager)
+                                .accessibilityIdentifier("settings.privacy.activityLevelPicker")
+                        }
+                    }
+
                     SettingsGroup("Cleanup") {
                         SettingsRow(
                             title: "Remove tracking parameters",

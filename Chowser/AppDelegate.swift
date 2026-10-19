@@ -382,6 +382,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             return
         }
 
+        // chowser://reopen — re-runs the last dismissed link through the normal pipeline
+        // (so the picker shows again). Usage: open "chowser://reopen"
+        if url.scheme == "chowser", url.host == "reopen" {
+            if BrowserManager.shared.activityLevel == .full, let entry = LinkHistory.shared.lastDismissed {
+                self.application(application, open: [entry.url])
+            }
+            return
+        }
+
         // chowser://mcp/start and chowser://mcp/stop — lets an AI agent with only shell
         // access (e.g. Claude Code) turn the local API on, do configuration tasks, and
         // turn it back off, without any GUI interaction. `open "chowser://mcp/start"`
@@ -419,6 +428,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
             if willAwaitShortlink {
                 manager.currentRewriteTrace = rewriteResult.steps
+                manager.pickerSourceAppBundleId = sourceAppBundleId
                 manager.currentURL = rewrittenURL
                 manager.isResolvingIncomingURL = true
                 showPicker()
@@ -433,7 +443,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             await MainActor.run {
                 manager.isResolvingIncomingURL = false
                 manager.currentRewriteTrace = rewriteResult.steps
-                manager.addRecentURL(cleanedURL)
                 manager.currentURL = cleanedURL
 
                 // Pass the source app captured at the top of this Task explicitly — reading
@@ -468,7 +477,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                         url: cleanedURL,
                         withBrowserBundleID: browser.bundleId,
                         profile: browser.profile,
-                        usePrivateMode: usePrivateMode
+                        usePrivateMode: usePrivateMode,
+                        sourceApp: sourceAppBundleId,
+                        viaRule: rule?.name
                     )
                     if willAwaitShortlink { self.closePicker() }
                     return
@@ -480,18 +491,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                     )
                     manager.currentURLPrivateModeRequested = false
                     if NativeAppDirectoryService.shared.open(resolution) {
+                        LinkHistory.shared.record(
+                            url: cleanedURL,
+                            source: sourceAppBundleId,
+                            outcome: .native(handlerBundleID: resolution.handlerBundleIdentifier)
+                        )
                         manager.currentURL = nil
                         if willAwaitShortlink { self.closePicker() }
                         return
                     }
                     // The handler changed between resolution and open. Keep the original
                     // HTTPS URL in the picker instead of trusting the new handler.
+                    manager.pickerSourceAppBundleId = sourceAppBundleId
                     showPicker()
 
                 case .picker:
                     AppLogger.log("Route", "Received link → picker")
                     manager.currentURLPrivateModeRequested = BrowserManager.supportsApplicationLaunchArgumentsInCurrentBuild
                         && incomingIntent.privateModeRequested
+                    manager.pickerSourceAppBundleId = sourceAppBundleId
                     showPicker()
                 }
             }
@@ -682,42 +700,78 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             menu.addItem(NSMenuItem.separator())
         }
         
-        let recentURLsItem = NSMenuItem(title: "Recent URLs", action: nil, keyEquivalent: "")
-        if let icon = NSImage(systemSymbolName: "clock", accessibilityDescription: nil) {
-            icon.isTemplate = true
-            recentURLsItem.image = icon
-        }
-        
-        // Dynamic: Recent URLs
-        let recentURLs = BrowserManager.shared.recentURLs
-        if !recentURLs.isEmpty {
-            let recentUrlsMenu = NSMenu()
-            for url in recentURLs {
-                let host = url.host ?? url.absoluteString
-                let title = host.prefix(40) + (host.count > 40 ? "..." : "")
-                
-                let item = NSMenuItem(title: String(title), action: #selector(openRecentURL(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = url
-                if let icon = NSImage(systemSymbolName: "safari", accessibilityDescription: nil) {
-                    item.image = icon
+        // Recent Links and Reopen need readable URLs, so they only exist at "Full history".
+        if BrowserManager.shared.activityLevel == .full, let lastEntry = LinkHistory.shared.entries.first {
+            // Toggle: when on, the last links sit right in the menu instead of a submenu.
+            let showRecent = BrowserManager.shared.showRecentLinksInMenu
+            let toggleItem = NSMenuItem(title: "Show Recent Links", action: #selector(toggleRecentLinksInMenu), keyEquivalent: "")
+            toggleItem.target = self
+            toggleItem.state = showRecent ? .on : .off
+            menu.addItem(toggleItem)
+
+            if showRecent {
+                // An agent re-opening the same link shouldn't fill the menu with copies.
+                var seenURLs = Set<URL>()
+                let recentEntries = LinkHistory.shared.entries.filter { seenURLs.insert($0.url).inserted }.prefix(5)
+                for entry in recentEntries {
+                    let url = entry.url
+                    let host = url.host ?? url.absoluteString
+                    let title = host.prefix(40) + (host.count > 40 ? "..." : "")
+
+                    let item = NSMenuItem(title: String(title), action: #selector(openRecentURL(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = url
+                    item.indentationLevel = 1
+                    let (symbol, description) = Self.outcomeMarker(for: entry.outcome)
+                    item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
+                    item.toolTip = "\(description): \(url.absoluteString)"
+                    menu.addItem(item)
+
+                    let altItem = NSMenuItem(title: "Create Rule for \(host)", action: #selector(createRuleFromRecentURL(_:)), keyEquivalent: "")
+                    altItem.target = self
+                    altItem.representedObject = url
+                    altItem.isAlternate = true
+                    altItem.keyEquivalentModifierMask = .option
+                    altItem.indentationLevel = 1
+                    if let icon = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: nil) {
+                        altItem.image = icon
+                    }
+                    altItem.toolTip = "Create a routing rule for this domain"
+                    menu.addItem(altItem)
                 }
-                item.toolTip = url.absoluteString
-                recentUrlsMenu.addItem(item)
-                
-                let altItem = NSMenuItem(title: "Create Rule for \(host)", action: #selector(createRuleFromRecentURL(_:)), keyEquivalent: "")
-                altItem.target = self
-                altItem.representedObject = url
-                altItem.isAlternate = true
-                altItem.keyEquivalentModifierMask = .option
-                if let icon = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: nil) {
-                    altItem.image = icon
-                }
-                altItem.toolTip = "Create a routing rule for this domain"
-                recentUrlsMenu.addItem(altItem)
+                let showAllItem = NSMenuItem(title: "Show All…", action: #selector(showActivity), keyEquivalent: "")
+                showAllItem.target = self
+                showAllItem.indentationLevel = 1
+                menu.addItem(showAllItem)
             }
-            recentURLsItem.submenu = recentUrlsMenu
-            menu.addItem(recentURLsItem)
+
+            let browsers = BrowserManager.shared.configuredBrowsers
+            if !browsers.isEmpty {
+                let reopenItem = NSMenuItem(title: "Reopen Last Link In", action: nil, keyEquivalent: "")
+                if let icon = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: nil) {
+                    icon.isTemplate = true
+                    reopenItem.image = icon
+                }
+                let reopenMenu = NSMenu()
+                let lastHost = lastEntry.url.host ?? lastEntry.url.absoluteString
+                for browser in browsers {
+                    var name = browser.name
+                    if let profile = browser.profile { name += " – \(profile)" }
+                    let item = NSMenuItem(title: name, action: #selector(reopenLastLink(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = browser
+                    reopenMenu.addItem(item)
+
+                    let altItem = NSMenuItem(title: "Always open \(lastHost) in \(name)", action: #selector(alwaysOpenLastHost(_:)), keyEquivalent: "")
+                    altItem.target = self
+                    altItem.representedObject = browser
+                    altItem.isAlternate = true
+                    altItem.keyEquivalentModifierMask = .option
+                    reopenMenu.addItem(altItem)
+                }
+                reopenItem.submenu = reopenMenu
+                menu.addItem(reopenItem)
+            }
         }
 
         // 3. Open Clipboard URL -> submenu
@@ -888,6 +942,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         self.application(NSApp, open: [url])
     }
 
+    private static func outcomeMarker(for outcome: LinkHistoryEntry.Outcome) -> (symbol: String, description: String) {
+        switch outcome {
+        case .browser: return ("safari", "Opened in a browser")
+        case .native: return ("app.badge", "Opened in an app")
+        case .dismissed: return ("arrow.uturn.backward", "Dismissed")
+        }
+    }
+
+    @objc private func toggleRecentLinksInMenu() {
+        BrowserManager.shared.showRecentLinksInMenu.toggle()
+    }
+
+    @objc private func showActivity() {
+        openSettingsPage(.activity)
+    }
+
+    @objc private func reopenLastLink(_ sender: NSMenuItem) {
+        guard let browser = sender.representedObject as? BrowserConfig,
+              let entry = LinkHistory.shared.entries.first else { return }
+        BrowserManager.shared.open(url: entry.url, withBrowserBundleID: browser.bundleId, profile: browser.profile)
+    }
+
+    @objc private func alwaysOpenLastHost(_ sender: NSMenuItem) {
+        guard let browser = sender.representedObject as? BrowserConfig,
+              let entry = LinkHistory.shared.entries.first,
+              let host = entry.url.host else { return }
+        BrowserManager.shared.alwaysOpen(host: host, in: browser)
+        BrowserManager.shared.open(url: entry.url, withBrowserBundleID: browser.bundleId, profile: browser.profile)
+    }
+
     @objc private func createRuleFromRecentURL(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL else { return }
         BrowserManager.shared.currentURL = url
@@ -931,6 +1015,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         BrowserManager.shared.setTemporaryRoute(browserBundleId: browser.bundleId, profile: browser.profile, duration: duration)
     }
     
+    func openSettingsPage(_ section: SettingsView.SettingsSection) {
+        BrowserManager.shared.requestedSettingsSection = section
+        openSettings()
+    }
+
     @objc func openSettings() {
         // Activate so the Settings window comes to the user's current space.
         NSApp.activate(ignoringOtherApps: true)
@@ -979,6 +1068,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     func closePicker() {
         pickerPanel?.orderOut(nil)
         BrowserManager.shared.currentURL = nil
+    }
+
+    func showPickerForCurrentURL() {
+        showPicker()
     }
 
     private func showPicker() {

@@ -513,6 +513,38 @@ final class ChowserUITests: XCTestCase {
         ui.assertBrowserSelectionRecorded()
     }
 
+    func testDismissedLinkAppearsInActivity() throws {
+        launchClassicPickerFixture(suiteLabel: "activity-dismissed")
+        let ui = ChowserAppDriver(app: app)
+        ui.assertPickerVisible()
+
+        app.typeKey(.escape, modifierFlags: [])
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: ui.pickerRoot)
+        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 5), .completed, "Escape should dismiss the picker.")
+        // Let the debounced history write land before relaunching.
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+
+        // Relaunch without ClearData: the history file must survive and show the dismissal.
+        launchTestApp(arguments: [
+            "-UITesting",
+            "-UITesting_MockInstalledBrowsers",
+            "-UITesting_DisableExternalOpen",
+            "-UITesting_OpenSettings",
+        ], suiteLabel: "activity-dismissed-settings")
+        ui.openSettings()
+        ui.clickSidebarItem(identifier: "settings.sidebar.activity")
+
+        let dismissedRow = app.descendants(matching: .any)
+            .matching(identifier: "settings.activity.row.dismissed")
+            .firstMatch
+        XCTAssertTrue(dismissedRow.waitForExistence(timeout: 5), "Dismissed link should be listed under Activity.")
+
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "activity-page"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testPickerNumberShortcutSelectsBrowser() throws {
         launchClassicPickerFixture(suiteLabel: "picker-number")
         let ui = ChowserAppDriver(app: app)
@@ -913,7 +945,7 @@ private struct ChowserAppDriver {
         XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, "Expected at least one routing rule row.", file: file, line: line)
     }
 
-    private func clickSidebarItem(identifier: String) {
+    func clickSidebarItem(identifier: String) {
         let candidates: [XCUIElement] = [
             app.buttons[identifier],
             app.staticTexts[identifier],

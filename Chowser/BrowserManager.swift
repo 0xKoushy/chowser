@@ -236,7 +236,10 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             "com.colliderli.iina",
             "org.videolan.vlc",
         ]
-        static let recentURLsKey = "recentURLs"
+        /// Removed feature; the key is only cleared so old data doesn't linger.
+        static let legacyRecentURLsKey = "recentURLs"
+        static let activityLevelKey = "activityLevel"
+        static let showRecentLinksInMenuKey = "showRecentLinksInMenu"
     }
 
     static let shared = BrowserManager(defaults: makeDefaultStore(), immediateWrite: false)
@@ -444,6 +447,9 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     var currentURL: URL?
     var currentURLPrivateModeRequested = false
     var currentSourceAppBundleId: String? = nil
+    /// Source app of the link currently in the picker. `currentSourceAppBundleId` is cleared
+    /// after routing, so the picker keeps its own copy for history entries.
+    var pickerSourceAppBundleId: String? = nil
     var lastOpenedBrowserBundleIDForTesting: String?
     @ObservationIgnored private var pendingPrivateModeURL: URL?
 
@@ -549,11 +555,24 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
     }
 
-    var recentURLs: [URL] = [] {
+    /// How much link history and usage data Chowser keeps. Lowering it deletes the data the
+    /// new level no longer allows (see `LinkHistory.setLevel`).
+    var activityLevel: ActivityLevel = .full {
         didSet {
-            scheduleSaveRecentURLs()
+            defaults.set(activityLevel.rawValue, forKey: Constants.activityLevelKey)
+            applyActivityLevel()
         }
     }
+
+    /// Whether the menu bar menu lists the last links inline (toggled from the menu itself).
+    var showRecentLinksInMenu: Bool = true {
+        didSet {
+            defaults.set(showRecentLinksInMenu, forKey: Constants.showRecentLinksInMenuKey)
+        }
+    }
+
+    /// One-shot request for the Settings window to show a section (consumed by `SettingsView`).
+    var requestedSettingsSection: SettingsView.SettingsSection?
 
     struct TemporaryRoute {
         let browserBundleId: String
@@ -578,7 +597,6 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     @ObservationIgnored private var pendingBrowsersSave: DispatchWorkItem?
     @ObservationIgnored private var pendingRulesSave: DispatchWorkItem?
     @ObservationIgnored private var pendingRewritesSave: DispatchWorkItem?
-    @ObservationIgnored private var pendingRecentURLsSave: DispatchWorkItem?
     @ObservationIgnored private var temporaryRouteExpirationTimer: Timer?
 
     init(defaults: UserDefaults = AppEnvironment.makeDefaultStore(), defaultsKey: String = "configuredBrowsers", immediateWrite: Bool = true) {
@@ -589,14 +607,16 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         if AppEnvironment.shouldClearDataOnLaunch {
             clearPersistedBrowserList()
             clearPersistedRoutingRules()
-            clearPersistedRecentURLs()
+            defaults.removeObject(forKey: Constants.activityLevelKey)
+            defaults.removeObject(forKey: Constants.showRecentLinksInMenuKey)
         }
+        clearLegacyRecentURLs()
 
         load()
         loadRoutingRules()
         loadRewriteRules()
         loadHiddenBundleIDs()
-        loadRecentURLs()
+        loadActivityLevel()
         loadPickerPreferences()
         if let fixture = AppEnvironment.pickerFixture {
             configuredBrowsers = fixture.browsers
@@ -756,12 +776,6 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
     }
 
-    func saveRecentURLs() {
-        if let encoded = try? JSONEncoder().encode(recentURLs) {
-            defaults.set(encoded, forKey: Constants.recentURLsKey)
-        }
-    }
-
     private func scheduleSaveBrowsers() {
         guard !immediateWrite else { save(); return }
         pendingBrowsersSave?.cancel()
@@ -792,16 +806,6 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
     }
 
-    private func scheduleSaveRecentURLs() {
-        guard !immediateWrite else { saveRecentURLs(); return }
-        pendingRecentURLsSave?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            Task { @MainActor in self?.saveRecentURLs() }
-        }
-        pendingRecentURLsSave = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
-    }
-
     func flushPendingSaves() {
         if pendingBrowsersSave != nil {
             pendingBrowsersSave?.cancel()
@@ -818,11 +822,7 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             pendingRewritesSave = nil
             saveRewriteRules()
         }
-        if pendingRecentURLsSave != nil {
-            pendingRecentURLsSave?.cancel()
-            pendingRecentURLsSave = nil
-            saveRecentURLs()
-        }
+        LinkHistory.shared.flushPendingSave()
     }
 
     private func scheduleTemporaryRouteExpirationTimer() {
@@ -875,12 +875,16 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
     }
 
-    func loadRecentURLs() {
-        if let data = defaults.data(forKey: Constants.recentURLsKey),
-           let decoded = try? JSONDecoder().decode([URL].self, from: data) {
-            recentURLs = decoded
-        } else {
-            recentURLs = []
+    private func loadActivityLevel() {
+        activityLevel = ActivityLevel(rawValue: defaults.string(forKey: Constants.activityLevelKey) ?? "") ?? .full
+        showRecentLinksInMenu = defaults.object(forKey: Constants.showRecentLinksInMenuKey) as? Bool ?? true
+    }
+
+    private func applyActivityLevel() {
+        LinkHistory.shared.setLevel(activityLevel)
+        DomainFrequencyTracker.shared.isRecordingEnabled = activityLevel != .off
+        if activityLevel == .off {
+            DomainFrequencyTracker.shared.clear()
         }
     }
 
@@ -912,8 +916,6 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     func resetToFreshSetup() {
         restoreDefaultBrowserList()
         restoreDefaultRoutingRules()
-        clearPersistedRecentURLs()
-        recentURLs = []
         currentURL = nil
         nativeAppApprovals = [:]
         hasCompletedOnboarding = false
@@ -1334,6 +1336,22 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             routingRules.append(normalizedRule)
         }
         return result
+    }
+
+    /// Makes every link to `host` open in `browser`: updates the plain host rule if one
+    /// exists, otherwise adds one.
+    @discardableResult
+    func alwaysOpen(host: String, in browser: BrowserConfig) -> Result<BrowserRoutingRule, RoutingRuleValidationError> {
+        let pattern = normalizedRoutingHostPattern(host)
+        if var existing = routingRules.first(where: {
+            !$0.useRegex && $0.pathPrefix == nil && $0.sourceAppBundleIDs.isEmpty && $0.hostPattern == pattern
+        }) {
+            existing.browserBundleId = browser.bundleId
+            existing.profile = browser.profile
+            existing.isEnabled = true
+            return updateRule(existing)
+        }
+        return addRoutingRule(name: host, hostPattern: host, pathPrefix: nil, browserBundleId: browser.bundleId, profile: browser.profile)
     }
 
     func removeRoutingRule(id: UUID) {
@@ -2411,8 +2429,25 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         }
     }
 
-    func open(url: URL, withBrowserBundleID bundleId: String, profile: String? = nil, usePrivateMode: Bool = false) {
+    func open(
+        url: URL,
+        withBrowserBundleID bundleId: String,
+        profile: String? = nil,
+        usePrivateMode: Bool = false,
+        sourceApp: String? = nil,
+        viaRule: String? = nil
+    ) {
+        func recordHistory() {
+            LinkHistory.shared.record(
+                url: url,
+                source: sourceApp,
+                outcome: .browser(bundleID: bundleId, profile: profile, viaRule: viaRule),
+                isPrivate: usePrivateMode
+            )
+        }
+
         if AppEnvironment.shouldDisableExternalURLOpen {
+            recordHistory()
             lastOpenedBrowserBundleIDForTesting = bundleId
             if AppEnvironment.isUITesting {
                 let count = defaults.integer(forKey: AppEnvironment.uiTestOpenInvocationCountKey)
@@ -2481,6 +2516,8 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             }
         }
         #endif
+
+        recordHistory()
 
         // Record frequency for suggestions
         if let domain = url.host {
@@ -2715,18 +2752,8 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         defaults.removeObject(forKey: Constants.routingRulesKey)
     }
 
-    private func clearPersistedRecentURLs() {
-        defaults.removeObject(forKey: Constants.recentURLsKey)
-    }
-
-    func addRecentURL(_ url: URL) {
-        var newURLs = recentURLs
-        newURLs.removeAll { $0 == url }
-        newURLs.insert(url, at: 0)
-        if newURLs.count > 5 {
-            newURLs = Array(newURLs.prefix(5))
-        }
-        recentURLs = newURLs
+    private func clearLegacyRecentURLs() {
+        defaults.removeObject(forKey: Constants.legacyRecentURLsKey)
     }
 
     private func loadHiddenBundleIDs() {

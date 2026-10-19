@@ -393,13 +393,13 @@ final class MCPServer {
                     "method": "GET", "path": "/settings",
                     "auth": true,
                     "description": "Read every app-level setting Chowser's Settings UI exposes — everything here is also editable by hand in Settings, this is the full surface for AI-driven configuration.",
-                    "response_fields": ["appMode", "fallbackPolicy { mode, browserId?, profile? }", "networkLookupsEnabled", "userShortenerHosts", "shortlinkResolutionTimeout", "trackingCleanupEnabled", "mcpAutoStartEnabled", "launchAtLogin", "skipExistingImportedRules", "skipExistingImportedBrowsers", "hiddenBundleIDs", "picker { iconSize, showLabels, layoutMode, appearanceMode, tintHex, backgroundOpacity, cornerRadius, accentHex, qrCodeAccentHex, dimInactiveBrowsers, colorScheme, showLinkPreview, densityPreference }"],
+                    "response_fields": ["appMode", "fallbackPolicy { mode, browserId?, profile? }", "networkLookupsEnabled", "userShortenerHosts", "shortlinkResolutionTimeout", "trackingCleanupEnabled", "activityLevel (\"full\"/\"statsOnly\"/\"off\")", "mcpAutoStartEnabled", "launchAtLogin", "skipExistingImportedRules", "skipExistingImportedBrowsers", "hiddenBundleIDs", "picker { iconSize, showLabels, layoutMode, appearanceMode, tintHex, backgroundOpacity, cornerRadius, accentHex, qrCodeAccentHex, dimInactiveBrowsers, colorScheme, showLinkPreview, densityPreference }"],
                 ],
                 [
                     "method": "POST", "path": "/settings",
                     "auth": true,
                     "description": "Update one or more app-level settings — the full Settings UI surface. Only include the keys you want to change; everything else is left as-is. AGENT GUIDANCE: when a user asks to configure Chowser conversationally (\"turn on dark mode for the picker\", \"stop launching at login\", \"hide the picker labels\"), call GET /settings first to see current values, then POST just the fields that changed. Ask before changing anything the user didn't explicitly request.",
-                    "body_fields": ["appMode? (\"app\" or \"menuBar\")", "fallbackPolicy? { mode (\"picker\" or \"browser\"), browserId? (required when mode is \"browser\" — must be an existing browser's id), profile? }", "networkLookupsEnabled?", "userShortenerHosts? ([String])", "shortlinkResolutionTimeout? (seconds)", "trackingCleanupEnabled?", "mcpAutoStartEnabled?", "launchAtLogin?", "skipExistingImportedRules?", "skipExistingImportedBrowsers?", "hiddenBundleIDs? ([String], full replacement)", "picker? { iconSize? (\"small\"/\"medium\"/\"large\"), showLabels?, layoutMode? (\"icons\"/\"list\"/\"radial\"/\"minimal\"), appearanceMode? (\"auto\"/\"custom\"), tintHex?, backgroundOpacity? (0-1), cornerRadius?, accentHex?, qrCodeAccentHex?, dimInactiveBrowsers?, colorScheme? (\"system\"/\"light\"/\"dark\"), showLinkPreview?, densityPreference? (\"default\"/\"compact\") }"],
+                    "body_fields": ["appMode? (\"app\" or \"menuBar\")", "fallbackPolicy? { mode (\"picker\" or \"browser\"), browserId? (required when mode is \"browser\" — must be an existing browser's id), profile? }", "networkLookupsEnabled?", "userShortenerHosts? ([String])", "shortlinkResolutionTimeout? (seconds)", "trackingCleanupEnabled?", "activityLevel? (\"full\"/\"statsOnly\"/\"off\" — lowering it deletes stored link history and usage stats)", "mcpAutoStartEnabled?", "launchAtLogin?", "skipExistingImportedRules?", "skipExistingImportedBrowsers?", "hiddenBundleIDs? ([String], full replacement)", "picker? { iconSize? (\"small\"/\"medium\"/\"large\"), showLabels?, layoutMode? (\"icons\"/\"list\"/\"radial\"/\"minimal\"), appearanceMode? (\"auto\"/\"custom\"), tintHex?, backgroundOpacity? (0-1), cornerRadius?, accentHex?, qrCodeAccentHex?, dimInactiveBrowsers?, colorScheme? (\"system\"/\"light\"/\"dark\"), showLinkPreview?, densityPreference? (\"default\"/\"compact\") }"],
                 ],
             ]
             return httpResponse(status: 200, body: [
@@ -528,6 +528,7 @@ final class MCPServer {
                 "userShortenerHosts": Array(manager.userShortenerHosts),
                 "shortlinkResolutionTimeout": manager.shortlinkResolutionTimeout,
                 "trackingCleanupEnabled": manager.trackingCleanupEnabled,
+                "activityLevel": manager.activityLevel.rawValue,
                 "mcpAutoStartEnabled": manager.mcpAutoStartEnabled,
                 "launchAtLogin": manager.launchAtLogin,
                 "skipExistingImportedRules": manager.skipExistingImportedRules,
@@ -894,6 +895,7 @@ private struct MCPSettingsUpdate {
         assign(request.userShortenerHosts.map(Set.init), to: \BrowserManager.userShortenerHosts, on: manager)
         assign(request.shortlinkResolutionTimeout, to: \BrowserManager.shortlinkResolutionTimeout, on: manager)
         assign(request.trackingCleanupEnabled, to: \BrowserManager.trackingCleanupEnabled, on: manager)
+        assign(request.activityLevel, to: \BrowserManager.activityLevel, on: manager)
         assign(request.mcpAutoStartEnabled, to: \BrowserManager.mcpAutoStartEnabled, on: manager)
         assign(request.launchAtLogin, to: \BrowserManager.launchAtLogin, on: manager)
         assign(request.skipExistingImportedRules, to: \BrowserManager.skipExistingImportedRules, on: manager)
@@ -919,6 +921,7 @@ private struct MCPSettingsUpdate {
         let userShortenerHosts: [String]?
         let shortlinkResolutionTimeout: Double?
         let trackingCleanupEnabled: Bool?
+        let activityLevel: ActivityLevel?
         let mcpAutoStartEnabled: Bool?
         let launchAtLogin: Bool?
         let skipExistingImportedRules: Bool?

@@ -16,6 +16,9 @@ struct SettingsView: View {
     @State var currentPrefillURL: URL?
     @State var selectedSection: SettingsSection = .browsers
     @State var showingResetConfirmation = false
+    @State var activityFilter: ActivityFilter = .all
+    @State var activitySearch = ""
+    @State var showingClearHistoryConfirmation = false
     @State var newShortenerHost = ""
     /// Rules page editing state (selection, unsaved drafts). Owned here so drafts
     /// survive switching sidebar sections.
@@ -42,6 +45,7 @@ struct SettingsView: View {
         case nativeApps = "Native Apps"
         case picker = "Picker"
         case privacy = "Privacy"
+        case activity = "Activity"
         case general = "General"
         case backup = "Backup & Advanced"
 
@@ -50,7 +54,7 @@ struct SettingsView: View {
         /// Sidebar groups, separated by a small gap.
         static let groups: [[SettingsSection]] = [
             [.browsers, .rules, .rewrites, .nativeApps],
-            [.picker, .privacy],
+            [.picker, .privacy, .activity],
             [.general, .backup],
         ]
 
@@ -62,6 +66,7 @@ struct SettingsView: View {
             case .nativeApps: return "app.badge"
             case .picker: return "square.grid.2x2"
             case .privacy: return "hand.raised"
+            case .activity: return "clock.arrow.circlepath"
             case .general: return "gearshape"
             case .backup: return "archivebox"
             }
@@ -77,6 +82,7 @@ struct SettingsView: View {
             // this identifier.
             case .picker: return "settings.sidebar.appearance"
             case .privacy: return "settings.sidebar.privacy"
+            case .activity: return "settings.sidebar.activity"
             case .general: return "settings.sidebar.general"
             case .backup: return "settings.sidebar.backup"
             }
@@ -104,6 +110,8 @@ struct SettingsView: View {
                 )
             )
         }
+        .onAppear(perform: consumeRequestedSection)
+        .onChange(of: browserManager.requestedSettingsSection) { consumeRequestedSection() }
         .onChange(of: showingAddRuleSheet) {
             guard !showingAddRuleSheet else { return }
             currentPrefillURL = nil
@@ -149,6 +157,12 @@ struct SettingsView: View {
             )
         }
         .accessibilityIdentifier("settings.root")
+    }
+
+    private func consumeRequestedSection() {
+        guard let section = browserManager.requestedSettingsSection else { return }
+        browserManager.requestedSettingsSection = nil
+        selectedSection = section
     }
 
     func checkForRewriteCatalogUpdates() {
@@ -197,6 +211,8 @@ struct SettingsView: View {
                 appearanceSection
             case .privacy:
                 privacySection
+            case .activity:
+                activitySection
             case .general:
                 generalSection
             case .backup:
@@ -261,7 +277,7 @@ struct SettingsView: View {
             return browserManager.rewriteRules.filter(\.isEnabled).count
         case .nativeApps:
             return browserManager.nativeAppApprovals.count
-        case .picker, .privacy, .general, .backup:
+        case .picker, .privacy, .activity, .general, .backup:
             return 0
         }
     }
