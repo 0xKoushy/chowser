@@ -24,12 +24,20 @@ enum AppEnvironment {
         arguments.contains("-UITesting_OpenPicker")
     }
 
+    static var shouldOpenURLBatchOnLaunch: Bool {
+        isUITesting && arguments.contains("-UITesting_OpenURLBatch")
+    }
+
+    static var shouldAutoRouteBatchForUITesting: Bool {
+        shouldOpenURLBatchOnLaunch && arguments.contains("-UITesting_AutoRouteBatchFixture")
+    }
+
     static var shouldUseNarrowSettingsWindow: Bool {
         isUITesting && arguments.contains("-UITesting_NarrowSettings")
     }
 
     static var shouldBypassOnboardingForRequestedUITestSurface: Bool {
-        isUITesting && (shouldOpenSettingsOnLaunch || shouldOpenPickerOnLaunch)
+        isUITesting && (shouldOpenSettingsOnLaunch || shouldOpenPickerOnLaunch || shouldOpenURLBatchOnLaunch)
     }
 
     static var shouldUseMockInstalledBrowsers: Bool {
@@ -120,6 +128,9 @@ enum AppEnvironment {
     nonisolated static var linkHistoryFileURLOverride: URL? {
         let temp = FileManager.default.temporaryDirectory
         if isUITesting {
+            if let logsDirectory = automatedTestLogsDirectory {
+                return logsDirectory.appendingPathComponent("link-history.json")
+            }
             return temp.appendingPathComponent("chowser-ui-tests-link-history.json")
         }
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {

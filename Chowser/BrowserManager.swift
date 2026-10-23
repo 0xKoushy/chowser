@@ -663,13 +663,17 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         loadImportPreferences()
         appMode = ChowserAppMode(rawValue: defaults.string(forKey: Constants.appModeKey) ?? "") ?? .app
         hasBeenAskedAppMode = defaults.bool(forKey: Constants.hasBeenAskedAppModeKey)
-        if AppEnvironment.isUITesting && AppEnvironment.shouldOpenPickerOnLaunch {
+        if AppEnvironment.isUITesting
+            && (AppEnvironment.shouldOpenPickerOnLaunch || AppEnvironment.shouldOpenURLBatchOnLaunch) {
             // A picker fixture must not auto-open the App Mode Settings window a moment
             // later and dismiss the nonactivating picker before XCTest can inspect it.
             appMode = .menuBar
             hasBeenAskedAppMode = true
         }
         loadFallbackPolicy()
+        if AppEnvironment.shouldAutoRouteBatchForUITesting, let browser = configuredBrowsers.first {
+            fallbackPolicy = BrowserFallbackPolicy(mode: .browser, browserID: browser.id)
+        }
         loadNetworkPrivacyPreferences()
         mcpAutoStartEnabled = defaults.bool(forKey: Constants.mcpAutoStartEnabledKey)
         lastSeenRewriteCatalogVersion = defaults.integer(forKey: Constants.lastSeenRewriteCatalogVersionKey)

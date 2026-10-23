@@ -135,6 +135,36 @@ final class ChowserUITests: XCTestCase {
         return false
     }
 
+    func testIncomingURLBatchOpensDistinctLinksInOrder() throws {
+        launchTestApp(arguments: [
+            "-UITesting",
+            "-UITesting_ClearData",
+            "-UITesting_IconsPickerFixture",
+            "-UITesting_DisableExternalOpen",
+            "-UITesting_AutoRouteBatchFixture",
+            "-UITesting_OpenURLBatch",
+        ], suiteLabel: "incoming-batch")
+
+        XCTAssertTrue(waitForOpenInvocationCount(2, timeout: 8), "One delegate batch must open both links.")
+
+        struct HistoryURL: Decodable { let url: URL }
+        let historyFile = logsDirectory.appendingPathComponent("link-history.json")
+        let deadline = Date().addingTimeInterval(5)
+        var recordedURLs: [URL] = []
+        repeat {
+            if let data = try? Data(contentsOf: historyFile),
+               let entries = try? JSONDecoder().decode([HistoryURL].self, from: data) {
+                recordedURLs = entries.map(\.url)
+            }
+            if recordedURLs.count == 2 { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+        XCTAssertEqual(recordedURLs.reversed().map(\.absoluteString), [
+            "https://first-batch.example/",
+            "https://second-batch.example/",
+        ])
+    }
+
     private func performSystemDrag(from start: CGPoint, to end: CGPoint) {
         let source = CGEventSource(stateID: .hidSystemState)
         CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: start, mouseButton: .left)?

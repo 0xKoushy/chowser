@@ -134,6 +134,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 self.revealPickerWindow(retries: 8)
             }
         }
+
+        if AppEnvironment.shouldOpenURLBatchOnLaunch {
+            DispatchQueue.main.async {
+                self.application(NSApp, open: [
+                    URL(string: "https://first-batch.example/")!,
+                    URL(string: "https://second-batch.example/")!,
+                ])
+            }
+        }
     }
 
     private func setupApplicationState() {
