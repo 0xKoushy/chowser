@@ -37,6 +37,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var settingsWindowController: NSWindowController?
     private var pendingReopenWorkItem: DispatchWorkItem?
     private var lastURLOpenUptime = -TimeInterval.infinity
+    private var incomingURLQueue = IncomingURLQueue()
 
     private static let deferredReopenDelay: TimeInterval = 0.1
 
@@ -76,6 +77,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             super.setFrame(adjustedFrame, display: flag)
         }
     }
+
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Register our own Apple Event handler for URL opens BEFORE Cocoa installs its
@@ -347,20 +349,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         cancelPendingReopen()
         lastURLOpenUptime = ProcessInfo.processInfo.systemUptime
         let manager = BrowserManager.shared
-
-        guard let url = urls.first else {
-            manager.currentSourceAppBundleId = nil
-            return
+        let sourceApp = manager.currentSourceAppBundleId
+        manager.currentSourceAppBundleId = nil
+        let forceShowPicker = NSEvent.modifierFlags.contains(.shift)
+        let entries = urls.map { url in
+            IncomingURLQueue.Entry(
+                url: url,
+                sourceApp: sourceApp,
+                forceShowPicker: forceShowPicker,
+                privateModeRequested: manager.consumeClipboardPrivateModeRequest(for: url)
+            )
         }
-        let clipboardPrivateModeRequested = manager.consumeClipboardPrivateModeRequest(for: url)
+        if let next = incomingURLQueue.enqueue(entries) { processIncomingURL(next) }
+    }
+
+    func completeIncomingURL() {
+        guard let next = incomingURLQueue.finishActive() else { return }
+        // Let AppKit finish ordering out the previous panel before showing the next link.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.incomingURLQueue.active?.id == next.id else { return }
+            self.processIncomingURL(next)
+        }
+    }
+
+    private func processIncomingURL(_ entry: IncomingURLQueue.Entry) {
+        let url = entry.url
+        let manager = BrowserManager.shared
 
         // Feature 4: Handle chowser://internal scheme (from Share Extension).
-        if url.scheme == "chowser", url.host == "open",
-           let targetStr = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-               .queryItems?.first(where: { $0.name == "url" })?.value,
-           let target = URL(string: targetStr),
-           target.scheme == "http" || target.scheme == "https" {
-            self.application(application, open: [target])
+        if url.scheme == "chowser", url.host == "open" {
+            guard let targetStr = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "url" })?.value,
+                let target = URL(string: targetStr),
+                target.scheme == "http" || target.scheme == "https" else {
+                completeIncomingURL()
+                return
+            }
+            let unwrapped = IncomingURLQueue.Entry(
+                url: target, sourceApp: entry.sourceApp,
+                forceShowPicker: entry.forceShowPicker,
+                privateModeRequested: entry.privateModeRequested, id: entry.id
+            )
+            if let next = incomingURLQueue.replaceActive(with: unwrapped) { processIncomingURL(next) }
             return
         }
 
@@ -368,8 +398,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // Usage: open "chowser://import?browsers=/path/to/browsers.json&rules=/path/to/rules.json"
         if url.scheme == "chowser", url.host == "import" {
             // Legacy functionality removed: handleImportURL(url)
+            completeIncomingURL()
+            return
         }
-        // The `return` statement was removed as part of the legacy functionality removal.
 
         // chowser://settings — a fallback entry point independent of the menu bar icon.
         // Chowser's only other UI entry point is the status item; if it's ever hidden
@@ -379,17 +410,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // address bar. Usage: open "chowser://settings"
         if url.scheme == "chowser", url.host == "settings" {
             openSettings()
+            completeIncomingURL()
             return
         }
 
         // chowser://reopen — re-runs the last dismissed link through the normal pipeline
         // (so the picker shows again). Usage: open "chowser://reopen"
         if url.scheme == "chowser", url.host == "reopen" {
-            if BrowserManager.shared.activityLevel == .full, let entry = LinkHistory.shared.lastDismissed {
+            if BrowserManager.shared.activityLevel == .full, let dismissedEntry = LinkHistory.shared.lastDismissed {
                 // Route as the app that originally sent the link, not whoever sent `reopen`,
                 // so source-app rules behave as they would have the first time.
-                BrowserManager.shared.currentSourceAppBundleId = entry.sourceBundleID
-                self.application(application, open: [entry.url])
+                let reopened = IncomingURLQueue.Entry(
+                    url: dismissedEntry.url, sourceApp: dismissedEntry.sourceBundleID,
+                    forceShowPicker: false, privateModeRequested: false, id: entry.id
+                )
+                if let next = incomingURLQueue.replaceActive(with: reopened) { processIncomingURL(next) }
+            } else {
+                completeIncomingURL()
             }
             return
         }
@@ -405,14 +442,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             } else if url.path == "/stop" {
                 MCPServer.shared.stop()
             }
+            completeIncomingURL()
             return
         }
 
         // Modifier state belongs to the click event. Capture it before the Task's
         // optional shortlink await so releasing Shift cannot change this link's intent.
-        let incomingIntent = Self.captureIncomingURLIntent(
-            privateModeRequested: clipboardPrivateModeRequested,
-            modifierFlags: NSEvent.modifierFlags
+        let incomingIntent = IncomingURLIntent(
+            forceShowPicker: entry.forceShowPicker,
+            privateModeRequested: entry.privateModeRequested
         )
 
         Task {
@@ -420,7 +458,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             // (PRD Architecture Notes pipeline order: rewrites → shortlink → cleanup).
             // Source app is captured explicitly here (still non-nil; the defer below clears
             // it only after route resolution) rather than read ambiently by the pipeline.
-            let sourceAppBundleId = manager.currentSourceAppBundleId
+            let sourceAppBundleId = entry.sourceApp
             let rewriteResult = manager.applyRewritePipeline(to: url, sourceApp: sourceAppBundleId)
             let rewrittenURL = rewriteResult.finalURL
 
@@ -446,6 +484,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             let cleanedURL = manager.cleanURL(unshortenedURL)
 
             await MainActor.run {
+                guard self.incomingURLQueue.active == entry else { return }
                 manager.isResolvingIncomingURL = false
                 manager.currentRewriteTrace = rewriteResult.steps
                 // A link already waiting in the picker is about to be replaced; keep it in
@@ -475,12 +514,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 case .browser(let rule, let browser):
                     // No hostname/URL in the log — only the local routing decision.
                     AppLogger.log("Route", "Received link → rule '\(rule?.name ?? "auto")' → \(browser.bundleId)")
-                    manager.currentURL = nil
                     let usePrivateMode = Self.requestedPrivateModeForIncomingURL(
                         rule: rule,
                         forcedPrivateMode: incomingIntent.privateModeRequested
                     )
                     manager.currentURLPrivateModeRequested = false
+                    if willAwaitShortlink { self.closePicker() }
                     manager.open(
                         url: cleanedURL,
                         withBrowserBundleID: browser.bundleId,
@@ -490,8 +529,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                         viaRule: rule?.name,
                         // A rule marked private counts even where this build can't launch privately.
                         privateIntent: incomingIntent.privateModeRequested || (rule?.usePrivateMode ?? false)
-                    )
-                    if willAwaitShortlink { self.closePicker() }
+                    ) { success in
+                        guard self.incomingURLQueue.active == entry else { return }
+                        if success {
+                            manager.currentURL = nil
+                            self.completeIncomingURL()
+                        } else {
+                            manager.currentURL = cleanedURL
+                            manager.pickerSourceAppBundleId = sourceAppBundleId
+                            manager.pickerPrivateIntent = incomingIntent.privateModeRequested
+                            self.showPicker()
+                        }
+                    }
                     return
 
                 case .native(let resolution):
@@ -508,6 +557,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                         )
                         manager.currentURL = nil
                         if willAwaitShortlink { self.closePicker() }
+                        self.completeIncomingURL()
                         return
                     }
                     // The handler changed between resolution and open. Keep the original

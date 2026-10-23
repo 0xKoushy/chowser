@@ -68,7 +68,7 @@ final class AppUpdateController: NSObject, AppUpdateProviding {
 
     var automaticallyChecksForUpdates: Bool {
         get {
-            isConfigured ? updaterController.updater.automaticallyChecksForUpdates : true
+            isConfigured ? updaterController.updater.automaticallyChecksForUpdates : false
         }
         set {
             guard isConfigured else { return }

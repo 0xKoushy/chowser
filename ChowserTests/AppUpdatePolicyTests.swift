@@ -31,12 +31,20 @@ struct AppUpdatePolicyTests {
         #expect(AppUpdateController(defaults: defaults).includesBetaReleases)
     }
 
-    @Test("Updater fallbacks default to automatic checks without automatic downloads")
+    @Test("An unconfigured personal build never checks for updates automatically")
     @MainActor
     func updaterDefaults() {
         let controller = AppUpdateController()
 
-        #expect(controller.automaticallyChecksForUpdates)
+        #expect(!controller.isConfigured)
+        #expect(!controller.automaticallyChecksForUpdates)
         #expect(!controller.automaticallyDownloadsUpdates)
+    }
+
+    @Test("The direct product only names the fork as its update source")
+    func forkFeedIsOptIn() {
+        #expect(Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String
+            == "https://raw.githubusercontent.com/0xKoushy/chowser/updates/appcast.xml")
+        #expect(Bundle.main.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool == false)
     }
 }

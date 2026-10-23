@@ -107,6 +107,10 @@ final class ChowserUITests: XCTestCase {
     /// the unsandboxed app's writes. The runner does have read-only file access, so read the
     /// app's suite plist directly from the real home directory.
     private func observedOpenInvocationCount() -> Int {
+        observedCount(for: "uiTestOpenInvocationCount")
+    }
+
+    private func observedCount(for key: String) -> Int {
         guard let defaultsSuiteName, let passwd = getpwuid(getuid()) else { return 0 }
         let home = String(cString: passwd.pointee.pw_dir)
         let plist = URL(fileURLWithPath: home)
@@ -114,7 +118,7 @@ final class ChowserUITests: XCTestCase {
         guard let data = try? Data(contentsOf: plist),
               let object = try? PropertyListSerialization.propertyList(from: data, format: nil),
               let values = object as? [String: Any] else { return 0 }
-        return (values["uiTestOpenInvocationCount"] as? Int) ?? 0
+        return (values[key] as? Int) ?? 0
     }
 
     /// Waits for exactly `expectedCount` launches, then lets a late duplicate launch surface
@@ -311,6 +315,27 @@ final class ChowserUITests: XCTestCase {
                 "https://example.com/account/reset%20password?token=secret#confirm"
             )
         }
+    }
+
+    func testFailedBrowserLaunchKeepsLinkInPicker() throws {
+        launchTestApp(arguments: [
+            "-UITesting",
+            "-UITesting_ClearData",
+            "-UITesting_IconsPickerFixture",
+            "-UITesting_DisableExternalOpen",
+            "-UITesting_SimulateExternalOpenFailure",
+            "-UITesting_DefaultURL",
+            "-UITesting_OpenPicker",
+            "-ApplePersistenceIgnoreState",
+            "YES",
+        ], suiteLabel: "failed-launch")
+
+        let destination = app.staticTexts["picker.urlDisplay"]
+        XCTAssertTrue(destination.waitForExistence(timeout: 5))
+        app.buttons["Open in Safari"].click()
+        XCTAssertTrue(app.staticTexts["picker.launchError"].waitForExistence(timeout: 5))
+        XCTAssertTrue(destination.exists, "The link must remain available after the launch failure.")
+        XCTAssertTrue(waitForOpenInvocationCount(0))
     }
 
     func testPrivateModeIsVisibleAndAnnouncedInEveryPickerLayout() throws {

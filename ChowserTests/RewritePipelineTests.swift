@@ -19,6 +19,15 @@ struct RewritePipelineTests {
         )
     }
 
+    @Test("A comma-separated rewrite matches each listed host and no other host")
+    func commaSeparatedRewriteHosts() {
+        let rewrite = rule(host: "example.com, github.com", actions: [.removeFragment])
+
+        #expect(RewritePipeline.apply(url: url("https://example.com/a#x"), rules: [rewrite], sourceApp: nil).finalURL.absoluteString == "https://example.com/a")
+        #expect(RewritePipeline.apply(url: url("https://github.com/b#x"), rules: [rewrite], sourceApp: nil).finalURL.absoluteString == "https://github.com/b")
+        #expect(RewritePipeline.apply(url: url("https://other.com/#x"), rules: [rewrite], sourceApp: nil).finalURL.absoluteString == "https://other.com/#x")
+    }
+
     @Test("Force scheme leaves loopback hosts (localhost) unchanged")
     func forceSchemeSkipsLoopbackLocalhost() {
         let result = RewritePipeline.apply(url: url("http://localhost:5173/path"), rules: [rule(actions: [.forceScheme("https")])], sourceApp: nil)

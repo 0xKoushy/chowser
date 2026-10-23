@@ -43,6 +43,26 @@ struct BrowserManagerTests {
 
     // MARK: - Default State
 
+    @Test("A comma-separated routing rule matches each listed host and no other host")
+    @MainActor
+    func commaSeparatedRoutingHosts() {
+        let manager = BrowserManager(defaults: makeTestDefaults())
+        manager.configuredBrowsers.append(
+            BrowserConfig(name: "Chrome", bundleId: "com.google.Chrome", shortcutKey: "2")
+        )
+        let result = manager.addRoutingRule(
+            name: "Work",
+            hostPattern: "example.com, github.com",
+            pathPrefix: nil,
+            browserBundleId: "com.google.Chrome"
+        )
+
+        #expect(result.isSuccess)
+        #expect(manager.resolvedBrowser(for: URL(string: "https://example.com/a")!)?.bundleId == "com.google.Chrome")
+        #expect(manager.resolvedBrowser(for: URL(string: "https://github.com/b")!)?.bundleId == "com.google.Chrome")
+        #expect(manager.resolvedBrowser(for: URL(string: "https://other.com/")!) == nil)
+    }
+
     @Test("Fresh manager loads default Safari browser")
     @MainActor
     func defaultBrowserOnFirstLaunch() {

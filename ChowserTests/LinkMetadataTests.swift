@@ -3,6 +3,46 @@ import Foundation
 @testable import Chowser
 
 struct LinkMetadataTests {
+    private final class ByteCounter {
+        var value = 0
+    }
+
+    private struct CountingBytes: AsyncSequence {
+        typealias Element = UInt8
+        let prefix: [UInt8]
+        let total: Int
+        let counter: ByteCounter
+
+        struct Iterator: AsyncIteratorProtocol {
+            let source: CountingBytes
+            var offset = 0
+
+            mutating func next() async -> UInt8? {
+                guard offset < source.total else { return nil }
+                let byte = offset < source.prefix.count ? source.prefix[offset] : 0x20
+                offset += 1
+                source.counter.value += 1
+                return byte
+            }
+        }
+
+        func makeAsyncIterator() -> Iterator { Iterator(source: self) }
+    }
+
+    @Test("Metadata preview stops reading after one megabyte")
+    func boundedPreviewRead() async throws {
+        let counter = ByteCounter()
+        let source = CountingBytes(
+            prefix: Array("<html><head><title>Safe title</title></head>".utf8),
+            total: 1_100_000,
+            counter: counter
+        )
+        let html = try await LinkMetadataFetcher.readHTMLPrefix(from: source)
+        let metadata = LinkMetadataFetcher.parse(html: html, finalURL: URL(string: "https://example.com")!)
+        #expect(counter.value == 1_000_000)
+        #expect(metadata.title == "Safe title")
+    }
+
     @Test("Parses Open Graph title, description, and image")
     func parsesOpenGraph() {
         let html = """

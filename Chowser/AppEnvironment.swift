@@ -81,6 +81,10 @@ enum AppEnvironment {
         arguments.contains("-UITesting_DisableExternalOpen")
     }
 
+    static var shouldSimulateExternalOpenFailure: Bool {
+        isUITesting && arguments.contains("-UITesting_SimulateExternalOpenFailure")
+    }
+
     static var shouldDisableSystemIntegration: Bool {
         isUITesting || arguments.contains("-UITesting_DisableSystemIntegration")
     }
@@ -90,7 +94,11 @@ enum AppEnvironment {
             return suite
         }
 
-        return isUITesting ? uiTestDefaultsSuiteName : nil
+        if isUITesting { return uiTestDefaultsSuiteName }
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return "in.sreerams.Chowser.UnitTests.\(ProcessInfo.processInfo.processIdentifier)"
+        }
+        return nil
     }
 
     nonisolated static var automatedTestLogsDirectory: URL? {

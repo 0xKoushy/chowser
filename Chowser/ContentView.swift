@@ -53,6 +53,7 @@ struct ContentView: View {
     /// going to the app the user clicked into.
     @State private var graceClickMonitor: Any?
     @State private var showingConfigureRule = false
+    @State private var activeLaunchID: UUID?
     @AppStorage("pickerHintOpenCount") private var pickerHintOpenCount = 0
     private static let pickerHintOpens = 5
 
@@ -232,7 +233,21 @@ struct ContentView: View {
     }
 
     var body: some View {
-        pickerPresentation
+        VStack(spacing: 8) {
+            if !isPreview, let error = browserManager.lastLaunchError {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Couldn't open browser")
+                        .font(.system(size: 12, weight: .semibold))
+                        .accessibilityIdentifier("picker.launchError")
+                    Text(error)
+                        .font(.system(size: 11))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            }
+            pickerPresentation
+        }
             .fixedSize(horizontal: false, vertical: true)
             .padding(pickerPresentationPadding)
             .overlay(alignment: .topLeading) {
@@ -248,7 +263,10 @@ struct ContentView: View {
             .onAppear(perform: handleAppear)
             .onDisappear(perform: handleDisappear)
             .onChange(of: browserManager.currentURL) { oldURL, newURL in
-                if oldURL == nil, newURL != nil { presentedAt = ProcessInfo.processInfo.systemUptime }
+                if oldURL != newURL, newURL != nil {
+                    presentedAt = ProcessInfo.processInfo.systemUptime
+                    if !isPreview { installKeyEventMonitor() }
+                }
                 if !isPreview, oldURL == nil, newURL != nil, pickerHintOpenCount <= Self.pickerHintOpens {
                     pickerHintOpenCount += 1
                 }
@@ -1586,7 +1604,10 @@ struct ContentView: View {
     /// - Parameter recordDismissal: false when the link was just opened, so it isn't also
     ///   logged as dismissed.
     private func dismissPicker(recordDismissal: Bool = true) {
+        guard !recordDismissal || activeLaunchID == nil else { return }
         removeGraceClickMonitor()
+        activeLaunchID = nil
+        browserManager.lastLaunchError = nil
         // While a short link is still resolving, the routing task records the outcome.
         if recordDismissal, !isPreview, !privateMode, !browserManager.pickerPrivateIntent,
            !browserManager.isResolvingIncomingURL, let url = browserManager.currentURL {
@@ -1600,6 +1621,7 @@ struct ContentView: View {
         for window in NSApp.windows where window.isVisible && window.identifier?.rawValue == "picker" {
             window.orderOut(nil)
         }
+        if !isPreview { AppDelegate.shared?.completeIncomingURL() }
     }
 
     private func resetPickerState() {
@@ -1625,11 +1647,12 @@ struct ContentView: View {
     // MARK: - Browser Action
 
     private func openUrl(with browser: BrowserConfig, usePrivateMode: Bool = false) {
-        guard let url = browserManager.currentURL else { return }
+        guard let url = browserManager.currentURL, activeLaunchID == nil else { return }
+        let launchID = UUID()
+        activeLaunchID = launchID
         let effectiveUsePrivateMode = supportsPrivateLaunchMode && usePrivateMode
         let sourceApp = browserManager.pickerSourceAppBundleId
         let privateIntent = browserManager.pickerPrivateIntent
-        if !isPreview { dismissPicker(recordDismissal: false) }
         browserManager.open(
             url: url,
             withBrowserBundleID: browser.bundleId,
@@ -1637,7 +1660,11 @@ struct ContentView: View {
             usePrivateMode: effectiveUsePrivateMode,
             sourceApp: sourceApp,
             privateIntent: privateIntent
-        )
+        ) { success in
+            guard activeLaunchID == launchID else { return }
+            activeLaunchID = nil
+            if success && !isPreview { dismissPicker(recordDismissal: false) }
+        }
     }
 
     private func requestedPrivateMode(modifierFlags: NSEvent.ModifierFlags) -> Bool {

@@ -40,11 +40,11 @@
 	<key>CFBundleDisplayName</key>
 	<string>Chowser</string>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/bsreeram08/chowser/updates/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/0xKoushy/chowser/updates/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<key>SUAllowsAutomaticUpdates</key>
 	<true/>
 	<key>SUAutomaticallyUpdate</key>
