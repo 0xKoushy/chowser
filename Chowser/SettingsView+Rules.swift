@@ -703,6 +703,7 @@ private struct RuleInspector: View {
                     .accessibilityIdentifier("settings.rule.regexToggle")
                     hintText("For patterns a domain can’t express. The expression must match the entire host name.")
                 }
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("settings.rule.advancedDisclosure")
             }
 

@@ -36,6 +36,7 @@ struct RuleMergeReviewSheet: View {
             footer
         }
         .frame(width: 520, height: 480)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.ruleMergeReview.root")
     }
 
@@ -90,6 +91,7 @@ struct RuleMergeReviewSheet: View {
         }
         .padding(14)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.ruleMergeReview.suggestionRow")
     }
 

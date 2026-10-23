@@ -44,17 +44,32 @@ enum LinkMetadataFetcher {
         config.timeoutIntervalForRequest = timeout
         config.timeoutIntervalForResource = timeout
         let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
 
-        guard let (data, response) = try? await session.data(for: request) else { return .failed }
-        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-            return .unavailable(http.statusCode)
+        do {
+            let (bytes, response) = try await session.bytes(for: request)
+            if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+                return .unavailable(http.statusCode)
+            }
+            let finalURL = response.url ?? url
+            let html = try await readHTMLPrefix(from: bytes)
+            return .metadata(parse(html: html, finalURL: finalURL))
+        } catch {
+            return .failed
         }
-        let finalURL = response.url ?? url
-        // Decode a generous prefix: og: tags usually sit in <head>, but heavy pages
-        // (e.g. YouTube) emit ~600KB of inline JSON before them. 1MB covers those
-        // without parsing entire multi-MB documents.
-        let html = String(decoding: data.prefix(1_000_000), as: UTF8.self)
-        return .metadata(parse(html: html, finalURL: finalURL))
+    }
+
+    /// Read only the prefix needed for metadata, then stop the session's transfer.
+    static func readHTMLPrefix<Bytes: AsyncSequence>(from bytes: Bytes) async throws -> String
+    where Bytes.Element == UInt8 {
+        let limit = 1_000_000
+        var prefix = Data()
+        prefix.reserveCapacity(limit)
+        for try await byte in bytes {
+            prefix.append(byte)
+            if prefix.count == limit { break }
+        }
+        return String(decoding: prefix, as: UTF8.self)
     }
 
     /// Heuristic: does this URL look like a one-time/auth link whose token a preview

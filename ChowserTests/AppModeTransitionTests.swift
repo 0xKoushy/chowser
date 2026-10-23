@@ -3,6 +3,58 @@ import Testing
 @testable import Chowser
 
 struct AppModeTransitionTests {
+    @Test("Reapplying the active app mode keeps its entry point without changing activation policy",
+          arguments: [ChowserAppMode.app, .menuBar])
+    @MainActor
+    func reapplyingActiveModeIsIdempotent(_ mode: ChowserAppMode) {
+        var events: [String] = []
+        let result = AppDelegate.performAppModeTransition(
+            to: mode, currentMode: mode,
+            ensureStatusItem: { events.append("status-created"); return true },
+            setActivationPolicy: { _ in events.append("unexpected-policy-change"); return false },
+            removeStatusItem: { events.append("status-removed") },
+            persistMode: { events.append("persist-\($0.rawValue)") }
+        )
+        guard case .success = result else { Issue.record("An already active mode must succeed"); return }
+        #expect(events == (mode == .menuBar
+            ? ["status-created", "persist-menuBar"] : ["status-removed", "persist-app"]))
+    }
+
+    @Test("Incoming URL batches wait for the picker and retain each source and intent")
+    func incomingURLQueuePreservesOrderAndContext() {
+        var queue = IncomingURLQueue()
+        let first = IncomingURLQueue.Entry(
+            url: URL(string: "https://first.example")!, sourceApp: "app.first",
+            forceShowPicker: true, privateModeRequested: false
+        )
+        let second = IncomingURLQueue.Entry(
+            url: URL(string: "https://second.example")!, sourceApp: "app.first",
+            forceShowPicker: true, privateModeRequested: true
+        )
+        let third = IncomingURLQueue.Entry(
+            url: URL(string: "https://third.example")!, sourceApp: "app.second",
+            forceShowPicker: false, privateModeRequested: false
+        )
+        let duplicate = IncomingURLQueue.Entry(
+            url: first.url, sourceApp: first.sourceApp,
+            forceShowPicker: first.forceShowPicker, privateModeRequested: first.privateModeRequested
+        )
+        #expect(first != duplicate, "Two deliveries of the same URL need distinct identities")
+
+        #expect(queue.enqueue([first, second]) == first)
+        #expect(queue.enqueue([third]) == nil)
+        #expect(queue.active == first)
+        let unwrapped = IncomingURLQueue.Entry(
+            url: URL(string: "https://unwrapped.example")!, sourceApp: first.sourceApp,
+            forceShowPicker: first.forceShowPicker, privateModeRequested: first.privateModeRequested,
+            id: first.id
+        )
+        #expect(queue.replaceActive(with: unwrapped) == unwrapped)
+        #expect(queue.finishActive() == second)
+        #expect(queue.finishActive() == third)
+        #expect(queue.finishActive() == nil)
+    }
+
     @Test("Reopen is deferred only when no URL open is in flight")
     func reopenSuppression() {
         #expect(!AppDelegate.shouldScheduleDeferredReopen(

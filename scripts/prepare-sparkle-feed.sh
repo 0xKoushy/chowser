@@ -22,7 +22,7 @@ if [[ ! "$build_number" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-repository="${GITHUB_REPOSITORY:-bsreeram08/chowser}"
+repository="${GITHUB_REPOSITORY:-0xKoushy/chowser}"
 tag="v$version"
 archive_name="Chowser-$version.dmg"
 notes_name="Chowser-$version.md"

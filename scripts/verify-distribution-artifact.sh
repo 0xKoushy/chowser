@@ -101,8 +101,8 @@ if [[ "$distribution" == "direct" ]]; then
     require_signed_feed="$(require_plist_value SURequireSignedFeed)"
     verify_before_extraction="$(require_plist_value SUVerifyUpdateBeforeExtraction)"
 
-    if [[ "$feed_url" != https://* || "$feed_url" == *'$('* ]]; then
-        echo "Invalid Sparkle feed URL: $feed_url" >&2
+    if [[ "$feed_url" != "https://raw.githubusercontent.com/0xKoushy/chowser/updates/appcast.xml" ]]; then
+        echo "Unexpected Sparkle feed URL: $feed_url" >&2
         exit 1
     fi
     if [[ "$public_key" == *'$('* ]]; then

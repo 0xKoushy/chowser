@@ -366,6 +366,7 @@ struct RewriteRuleEditorSheet: View {
             .background(Color.primary.opacity(0.01))
         }
         .frame(width: 520, height: 520)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.addRewrite.root")
     }
 

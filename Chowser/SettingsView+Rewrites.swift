@@ -116,6 +116,7 @@ struct RewritesSettingsPage: View {
                 self.selection = nil
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.rewritesSection")
     }
 
@@ -781,6 +782,7 @@ private struct RewriteTesterPopover: View {
         }
         .padding(16)
         .frame(width: 380)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.rewriteTester.popover")
         .onAppear { urlFocused = true }
     }
@@ -973,6 +975,7 @@ struct RewriteCatalogSelectionSheet: View {
                         .accessibilityIdentifier("catalog.rule.\(item.entry.id)")
                     }
                     .padding(.vertical, 5)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("catalog.row.\(item.entry.id)")
                 }
             }
@@ -980,6 +983,7 @@ struct RewriteCatalogSelectionSheet: View {
             footer
         }
         .frame(width: 660, height: 600)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("catalog.selectionSheet")
     }
 

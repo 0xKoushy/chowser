@@ -368,6 +368,7 @@ struct RuleTesterPopover: View {
         }
         .padding(16)
         .frame(width: 340)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.ruleTester.popover")
         .onAppear { urlFocused = true }
     }

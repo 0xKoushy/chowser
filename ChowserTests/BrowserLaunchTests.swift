@@ -2,9 +2,55 @@ import Testing
 import Foundation
 @testable import Chowser
 
+@MainActor
+private final class FakeBrowserLauncher: BrowserLauncher {
+    var failure: String?
+
+    func applicationURL(for bundleID: String) -> URL? {
+        URL(fileURLWithPath: "/Applications/Test Browser.app")
+    }
+
+    func launch(
+        _ plan: BrowserManager.BrowserLaunchPlan,
+        completion: @MainActor @escaping (String?) -> Void
+    ) {
+        completion(failure)
+    }
+}
+
+@MainActor
 struct BrowserLaunchTests {
     private let url = URL(string: "https://example.com/path?q=1")!
     private let appURL = URL(fileURLWithPath: "/Applications/Test Browser.app")
+
+    @Test("Unit tests use a separate preferences domain")
+    func unitTestPreferencesAreIsolated() {
+        #expect(AppEnvironment.defaultsSuiteName != nil)
+    }
+
+    @Test("Only a confirmed browser launch records history and frequency")
+    func confirmedLaunchRecordsActivity() {
+        let launcher = FakeBrowserLauncher()
+        let defaults = UserDefaults(suiteName: "ChowserLaunchTests.\(UUID().uuidString)")!
+        let manager = BrowserManager(defaults: defaults, ownsActivityStores: true, launcher: launcher)
+        let uniqueURL = URL(string: "https://\(UUID().uuidString.lowercased()).example/path")!
+        let host = uniqueURL.host!
+        let historyBefore = LinkHistory.shared.entries.filter { $0.url == uniqueURL }.count
+        let frequencyBefore = DomainFrequencyTracker.shared.stats(for: host)["com.apple.Safari"] ?? 0
+        var results: [Bool] = []
+
+        launcher.failure = "simulated launch failure"
+        manager.open(url: uniqueURL, withBrowserBundleID: "com.apple.Safari") { results.append($0) }
+        #expect(results == [false])
+        #expect(LinkHistory.shared.entries.filter { $0.url == uniqueURL }.count == historyBefore)
+        #expect((DomainFrequencyTracker.shared.stats(for: host)["com.apple.Safari"] ?? 0) == frequencyBefore)
+
+        launcher.failure = nil
+        manager.open(url: uniqueURL, withBrowserBundleID: "com.apple.Safari") { results.append($0) }
+        #expect(results == [false, true])
+        #expect(LinkHistory.shared.entries.filter { $0.url == uniqueURL }.count == historyBefore + 1)
+        #expect((DomainFrequencyTracker.shared.stats(for: host)["com.apple.Safari"] ?? 0) == frequencyBefore + 1)
+    }
 
     @Test("Chromium-based browsers use --profile-directory without URL app argument")
     func chromiumProfileArguments() {

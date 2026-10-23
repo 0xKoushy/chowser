@@ -386,7 +386,6 @@ struct RadialPickerView: View {
 
             radialCenterHub
                 .position(center)
-                .allowsHitTesting(false)
         }
     }
 

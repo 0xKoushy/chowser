@@ -25,6 +25,22 @@ import Network
 import Observation
 import AppKit
 
+private nonisolated enum MCPRequestLimits {
+    static let maxConnections = 16
+    static let maxHeaderBytes = 16_384
+    static let maxRequestBytes = 1_048_576
+    static let maxDiscardBytes = 2_097_152
+    static let timeout: TimeInterval = 5
+}
+
+/// Mutated only by callbacks delivered on MCPServer.serverQueue.
+private nonisolated final class MCPRequestState: @unchecked Sendable {
+    var finished = false
+    var closed = false
+    var draining = false
+    var responseSent = false
+}
+
 @MainActor
 @Observable
 final class MCPServer {
@@ -44,25 +60,36 @@ final class MCPServer {
     /// token without any UI interaction. Local file, not networked; same trust level
     /// as the server itself (localhost-only).
     private static var sessionFileURL: URL {
+        if let directory = AppEnvironment.automatedTestLogsDirectory {
+            return directory.appendingPathComponent("mcp-session.json")
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        // Isolated under UI testing so a test run never clobbers a real running
-        // instance's session file (both would otherwise share one path).
         let subpath = AppEnvironment.isUITesting ? "Chowser-UITests/mcp-session.json" : "Chowser/mcp-session.json"
         return base.appendingPathComponent(subpath, isDirectory: false)
     }
 
     private func writeSessionFile() {
         let payload: [String: Any] = ["port": port, "authToken": authToken, "authHeader": "Authorization: Bearer \(authToken)"]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) else { return }
         let url = Self.sessionFileURL
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
+            let directory = url.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            // Protect a pre-existing directory before atomically publishing the token.
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try data.write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            AppLogger.error("MCP", "Could not publish the local session file: \(error.localizedDescription)")
+        }
     }
 
     private func removeSessionFile() {
-        try? FileManager.default.removeItem(at: Self.sessionFileURL)
+        do { try FileManager.default.removeItem(at: Self.sessionFileURL) }
+        catch let error as CocoaError where error.code == .fileNoSuchFile { /* Already stopped. */ }
+        catch { AppLogger.error("MCP", "Could not remove the local session file: \(error.localizedDescription)") }
     }
 
     func start(port: UInt16 = 24245) {
@@ -105,16 +132,38 @@ final class MCPServer {
         listener?.newConnectionHandler = { [weak self] connection in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                guard self.connections.count < MCPRequestLimits.maxConnections else {
+                    connection.start(queue: self.serverQueue)
+                    connection.send(
+                        content: self.httpResponse(status: 503, body: ["error": "Too many connections"]),
+                        completion: .contentProcessed { _ in connection.cancel() }
+                    )
+                    return
+                }
                 self.connections.append(connection)
+                let requestState = MCPRequestState()
                 connection.stateUpdateHandler = { [weak self] state in
-                    if case .cancelled = state {
+                    switch state {
+                    case .cancelled, .failed:
+                        requestState.closed = true
                         Task { @MainActor [weak self] in
                             self?.connections.removeAll { $0 === connection }
                         }
+                    default:
+                        break
                     }
                 }
                 connection.start(queue: self.serverQueue)
-                self.receiveFullRequest(on: connection, accumulated: Data())
+                self.serverQueue.asyncAfter(deadline: .now() + MCPRequestLimits.timeout) { [weak self] in
+                    guard let self, !requestState.closed else { return }
+                    if !requestState.finished {
+                        self.reject(connection, status: 408, message: "Request timed out", state: requestState)
+                        self.serverQueue.asyncAfter(deadline: .now() + 1) { connection.cancel() }
+                    } else {
+                        connection.cancel()
+                    }
+                }
+                self.receiveFullRequest(on: connection, accumulated: Data(), state: requestState)
             }
         }
 
@@ -135,75 +184,109 @@ final class MCPServer {
     }
 
     /// Accumulates data from the connection until the full HTTP request (headers + body based on Content-Length) is received.
-    private nonisolated func receiveFullRequest(on connection: NWConnection, accumulated: Data) {
+    private nonisolated func receiveFullRequest(
+        on connection: NWConnection, accumulated: Data, state: MCPRequestState
+    ) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
+            guard let self, !state.finished else { return }
 
             var buffer = accumulated
             if let data {
+                guard data.count <= MCPRequestLimits.maxRequestBytes - buffer.count else {
+                    self.reject(connection, status: 413, message: "Request too large", state: state)
+                    return
+                }
                 buffer.append(data)
             }
 
-            // Check if we have the full request: headers parsed and body complete
-            if let requestString = String(data: buffer, encoding: .utf8),
-               let headerEndRange = requestString.range(of: "\r\n\r\n") {
-
-                // Try to determine expected content length
-                let headerSection = String(requestString[..<headerEndRange.lowerBound])
-                let contentLength = self.parseContentLength(from: headerSection)
-                let headerEndOffset = requestString.distance(from: requestString.startIndex, to: headerEndRange.upperBound)
-                let bodyStart = headerEndOffset
-                let bodyReceived = buffer.count - bodyStart
-
-                if bodyReceived >= contentLength {
-                    // Full request received — process on MainActor
-                    let requestData = buffer
-                    let token = self.parseAuthToken(from: headerSection)
-                    Task { @MainActor in
-                        let response = self.processHTTPRequest(requestData, authToken: token)
-                        connection.send(content: response, completion: .contentProcessed { _ in
-                            connection.cancel()
-                        })
-                    }
-                    return
-                }
-            }
-
-            // Request not yet complete — keep reading (or stop if connection closed/errored)
-            if isComplete || error != nil {
-                // Incomplete request, try to process what we have
-                let requestData = buffer
-                let headerSection: String
-                if let rs = String(data: buffer, encoding: .utf8),
-                   let r = rs.range(of: "\r\n\r\n") {
-                    headerSection = String(rs[..<r.lowerBound])
+            guard let headerRange = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+                if buffer.count > MCPRequestLimits.maxHeaderBytes {
+                    self.reject(connection, status: 431, message: "Headers too large", state: state)
+                } else if isComplete || error != nil {
+                    self.reject(connection, status: 400, message: "Incomplete request", state: state)
                 } else {
-                    headerSection = ""
+                    self.receiveFullRequest(on: connection, accumulated: buffer, state: state)
                 }
-                let token = self.parseAuthToken(from: headerSection)
+                return
+            }
+            guard headerRange.upperBound <= MCPRequestLimits.maxHeaderBytes else {
+                self.reject(connection, status: 431, message: "Headers too large", state: state)
+                return
+            }
+            guard let headers = String(data: buffer[..<headerRange.lowerBound], encoding: .utf8),
+                  let contentLength = self.parseContentLength(from: headers) else {
+                self.reject(connection, status: 400, message: "Invalid headers", state: state)
+                return
+            }
+            guard contentLength <= MCPRequestLimits.maxRequestBytes - headerRange.upperBound else {
+                let remaining = max(0, contentLength - (buffer.count - headerRange.upperBound))
+                self.reject(connection, status: 413, message: "Request too large", state: state, drainBytes: remaining)
+                return
+            }
+            let bodyReceived = buffer.count - headerRange.upperBound
+            if bodyReceived == contentLength {
+                state.finished = true
+                let token = self.parseAuthToken(from: headers)
+                let requestData = buffer
                 Task { @MainActor in
                     let response = self.processHTTPRequest(requestData, authToken: token)
-                    connection.send(content: response, completion: .contentProcessed { _ in
-                        connection.cancel()
-                    })
+                    connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
                 }
+            } else if bodyReceived > contentLength || isComplete || error != nil {
+                self.reject(connection, status: 400, message: "Invalid request body", state: state)
             } else {
-                // Continue accumulating
-                self.receiveFullRequest(on: connection, accumulated: buffer)
+                self.receiveFullRequest(on: connection, accumulated: buffer, state: state)
             }
         }
     }
 
-    private nonisolated func parseContentLength(from headerSection: String) -> Int {
-        for line in headerSection.components(separatedBy: "\r\n") {
-            let parts = line.split(separator: ":", maxSplits: 1)
-            if parts.count == 2,
-               parts[0].trimmingCharacters(in: .whitespaces).lowercased() == "content-length",
-               let length = Int(parts[1].trimmingCharacters(in: .whitespaces)) {
-                return length
+    private nonisolated func reject(
+        _ connection: NWConnection, status: Int, message: String, state: MCPRequestState,
+        drainBytes: Int = 0
+    ) {
+        state.finished = true
+        if drainBytes > 0 {
+            state.draining = true
+            discardBody(on: connection, remaining: min(drainBytes, MCPRequestLimits.maxDiscardBytes), state: state)
+        }
+        connection.send(
+            content: httpResponse(status: status, body: ["error": message]),
+            completion: .contentProcessed { _ in
+                state.responseSent = true
+                if !state.draining { connection.cancel() }
+            }
+        )
+    }
+
+    private nonisolated func discardBody(
+        on connection: NWConnection, remaining: Int, state: MCPRequestState
+    ) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, done, error in
+            let unread = remaining - (data?.count ?? 0)
+            if unread <= 0 || done || error != nil {
+                state.draining = false
+                if state.responseSent { connection.cancel() }
+            } else {
+                self?.discardBody(on: connection, remaining: unread, state: state)
             }
         }
-        return 0
+    }
+
+    private nonisolated func parseContentLength(from headerSection: String) -> Int? {
+        var length: Int?
+        for line in headerSection.components(separatedBy: "\r\n") {
+            let parts = line.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let name = parts[0].trimmingCharacters(in: .whitespaces).lowercased()
+            if name == "transfer-encoding" { return nil }
+            if name == "content-length" {
+                guard length == nil,
+                      let parsed = Int(parts[1].trimmingCharacters(in: .whitespaces)),
+                      parsed >= 0 else { return nil }
+                length = parsed
+            }
+        }
+        return length ?? 0
     }
 
     private nonisolated func parseAuthToken(from headerSection: String) -> String? {
@@ -250,6 +333,9 @@ final class MCPServer {
 
         let method = String(parts[0])
         let rawPath = String(parts[1])
+        guard rawPath.hasPrefix("/") else {
+            return httpResponse(status: 400, body: ["error": "Invalid request target"])
+        }
 
         // Parse path and query string
         let pathComponents = rawPath.split(separator: "?", maxSplits: 1)
@@ -840,6 +926,10 @@ final class MCPServer {
         case 200: statusText = "OK"
         case 201: statusText = "Created"
         case 400: statusText = "Bad Request"
+        case 408: statusText = "Request Timeout"
+        case 413: statusText = "Content Too Large"
+        case 431: statusText = "Request Header Fields Too Large"
+        case 503: statusText = "Service Unavailable"
         case 401: statusText = "Unauthorized"
         case 404: statusText = "Not Found"
         case 422: statusText = "Unprocessable Entity"

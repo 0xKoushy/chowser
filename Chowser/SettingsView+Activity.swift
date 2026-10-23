@@ -121,6 +121,7 @@ extension SettingsView {
         } message: {
             Text("All recorded links are deleted from this Mac.")
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.activitySection")
     }
 

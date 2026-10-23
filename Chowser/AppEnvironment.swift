@@ -24,12 +24,20 @@ enum AppEnvironment {
         arguments.contains("-UITesting_OpenPicker")
     }
 
+    static var shouldOpenURLBatchOnLaunch: Bool {
+        isUITesting && arguments.contains("-UITesting_OpenURLBatch")
+    }
+
+    static var shouldAutoRouteBatchForUITesting: Bool {
+        shouldOpenURLBatchOnLaunch && arguments.contains("-UITesting_AutoRouteBatchFixture")
+    }
+
     static var shouldUseNarrowSettingsWindow: Bool {
         isUITesting && arguments.contains("-UITesting_NarrowSettings")
     }
 
     static var shouldBypassOnboardingForRequestedUITestSurface: Bool {
-        isUITesting && (shouldOpenSettingsOnLaunch || shouldOpenPickerOnLaunch)
+        isUITesting && (shouldOpenSettingsOnLaunch || shouldOpenPickerOnLaunch || shouldOpenURLBatchOnLaunch)
     }
 
     static var shouldUseMockInstalledBrowsers: Bool {
@@ -81,6 +89,10 @@ enum AppEnvironment {
         arguments.contains("-UITesting_DisableExternalOpen")
     }
 
+    static var shouldSimulateExternalOpenFailure: Bool {
+        isUITesting && arguments.contains("-UITesting_SimulateExternalOpenFailure")
+    }
+
     static var shouldDisableSystemIntegration: Bool {
         isUITesting || arguments.contains("-UITesting_DisableSystemIntegration")
     }
@@ -90,7 +102,11 @@ enum AppEnvironment {
             return suite
         }
 
-        return isUITesting ? uiTestDefaultsSuiteName : nil
+        if isUITesting { return uiTestDefaultsSuiteName }
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return "in.sreerams.Chowser.UnitTests.\(ProcessInfo.processInfo.processIdentifier)"
+        }
+        return nil
     }
 
     nonisolated static var automatedTestLogsDirectory: URL? {
@@ -107,11 +123,26 @@ enum AppEnvironment {
         return nil
     }
 
+    static func publishUITestOpenCount(_ count: Int) {
+        guard isUITesting, let directory = automatedTestLogsDirectory else { return }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try String(count).write(
+                to: directory.appendingPathComponent("open-count.txt"), atomically: true, encoding: .utf8
+            )
+        } catch {
+            AppLogger.error("UITesting", "Could not publish the launch observation: \(error.localizedDescription)")
+        }
+    }
+
     /// Redirects Link History away from the real Application Support file during UI and
     /// unit tests. Nil in a normal launch (LinkHistory then uses its default location).
     nonisolated static var linkHistoryFileURLOverride: URL? {
         let temp = FileManager.default.temporaryDirectory
         if isUITesting {
+            if let logsDirectory = automatedTestLogsDirectory {
+                return logsDirectory.appendingPathComponent("link-history.json")
+            }
             return temp.appendingPathComponent("chowser-ui-tests-link-history.json")
         }
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {

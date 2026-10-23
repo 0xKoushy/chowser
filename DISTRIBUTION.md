@@ -7,6 +7,10 @@ Chowser has two products built from the same source tree. Their distribution-spe
 | Direct download | `Chowser-osp` | No | Full supported-browser profile launching | Sparkle through GitHub Releases |
 | Mac App Store | `Chowser-appstore` | Yes | `NSWorkspace` launch fallback | Mac App Store / TestFlight only |
 
+Build these schemes with separate `-derivedDataPath` directories. Both produce
+`Chowser.app`; reusing one build directory can leave Sparkle files in the App
+Store bundle. Always verify the finished app with the script below.
+
 ## Direct-download product
 
 The direct target defines `DIRECT_DISTRIBUTION`, uses `Chowser.entitlements`, and is the only target that links Sparkle. Its finished app contains:
@@ -102,12 +106,12 @@ The private Sparkle key must never be committed. Back it up separately before th
 The signed feed is published at:
 
 ```text
-https://raw.githubusercontent.com/bsreeram08/chowser/updates/appcast.xml
+https://raw.githubusercontent.com/0xKoushy/chowser/updates/appcast.xml
 ```
 
 Each enclosure points to an immutable versioned GitHub Release URL. Stable entries use a one-day phased-rollout interval. Manual checks bypass Sparkle's phased rollout, as expected. Beta entries are unphased.
 
-The feed may later move behind `chowser.sreerams.in`, but the new URL must be shipped in an app update before switching hosting.
+If the feed moves to another fork-controlled host, ship its new URL in an app update before switching hosting.
 
 ## Mac App Store product
 

@@ -446,6 +446,7 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     }
 
     var currentURL: URL?
+    var lastLaunchError: String?
     var currentURLPrivateModeRequested = false
     var currentSourceAppBundleId: String? = nil
     /// Source app of the link currently in the picker. `currentSourceAppBundleId` is cleared
@@ -622,14 +623,17 @@ struct BrowserFallbackPolicy: Codable, Equatable {
     /// Only the app's shared manager drives `LinkHistory.shared` and `DomainFrequencyTracker.shared`;
     /// other instances (tests) must not wipe or re-level them.
     @ObservationIgnored private let ownsActivityStores: Bool
+    @ObservationIgnored private let launcher: any BrowserLauncher
 
     init(
         defaults: UserDefaults = AppEnvironment.makeDefaultStore(),
         defaultsKey: String = "configuredBrowsers",
         immediateWrite: Bool = true,
-        ownsActivityStores: Bool = false
+        ownsActivityStores: Bool = false,
+        launcher: (any BrowserLauncher)? = nil
     ) {
         self.ownsActivityStores = ownsActivityStores
+        self.launcher = launcher ?? SystemBrowserLauncher()
         self.defaults = defaults
         self.defaultsKey = defaultsKey
         self.immediateWrite = immediateWrite
@@ -659,13 +663,17 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         loadImportPreferences()
         appMode = ChowserAppMode(rawValue: defaults.string(forKey: Constants.appModeKey) ?? "") ?? .app
         hasBeenAskedAppMode = defaults.bool(forKey: Constants.hasBeenAskedAppModeKey)
-        if AppEnvironment.isUITesting && AppEnvironment.shouldOpenPickerOnLaunch {
+        if AppEnvironment.isUITesting
+            && (AppEnvironment.shouldOpenPickerOnLaunch || AppEnvironment.shouldOpenURLBatchOnLaunch) {
             // A picker fixture must not auto-open the App Mode Settings window a moment
             // later and dismiss the nonactivating picker before XCTest can inspect it.
             appMode = .menuBar
             hasBeenAskedAppMode = true
         }
         loadFallbackPolicy()
+        if AppEnvironment.shouldAutoRouteBatchForUITesting, let browser = configuredBrowsers.first {
+            fallbackPolicy = BrowserFallbackPolicy(mode: .browser, browserID: browser.id)
+        }
         loadNetworkPrivacyPreferences()
         mcpAutoStartEnabled = defaults.bool(forKey: Constants.mcpAutoStartEnabledKey)
         lastSeenRewriteCatalogVersion = defaults.integer(forKey: Constants.lastSeenRewriteCatalogVersionKey)
@@ -2547,29 +2555,36 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         usePrivateMode: Bool = false,
         sourceApp: String? = nil,
         viaRule: String? = nil,
-        privateIntent: Bool = false
+        privateIntent: Bool = false,
+        completion: ((Bool) -> Void)? = nil
     ) {
-        func recordHistory() {
-            LinkHistory.shared.record(
-                url: url,
-                source: sourceApp,
-                outcome: .browser(bundleID: bundleId, profile: profile, viaRule: viaRule),
-                isPrivate: usePrivateMode || privateIntent
-            )
+        lastLaunchError = nil
+
+        if AppEnvironment.shouldSimulateExternalOpenFailure {
+            lastLaunchError = "The test browser did not open."
+            Task { @MainActor in completion?(false) }
+            return
         }
 
         if AppEnvironment.shouldDisableExternalURLOpen {
-            recordHistory()
+            recordSuccessfulOpen(
+                url: url, bundleID: bundleId, profile: profile, sourceApp: sourceApp,
+                viaRule: viaRule, isPrivate: usePrivateMode || privateIntent
+            )
             lastOpenedBrowserBundleIDForTesting = bundleId
             if AppEnvironment.isUITesting {
                 let count = defaults.integer(forKey: AppEnvironment.uiTestOpenInvocationCountKey)
                 defaults.set(count + 1, forKey: AppEnvironment.uiTestOpenInvocationCountKey)
+                AppEnvironment.publishUITestOpenCount(count + 1)
             }
+            Task { @MainActor in completion?(true) }
             return
         }
 
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+        guard let appURL = launcher.applicationURL(for: bundleId) else {
             AppLogger.error("Launch", "App not found for bundle ID: \(bundleId)")
+            lastLaunchError = "Could not find the selected browser."
+            completion?(false)
             return
         }
 
@@ -2597,43 +2612,35 @@ struct BrowserFallbackPolicy: Codable, Equatable {
         // No hostname/URL recorded, private mode or not — only the destination browser.
         AppLogger.log("Launch", "Opening link in \(bundleId) profile=\(profile ?? "-")")
 
-        #if APP_STORE
-        // Sandboxed: attempt to pass launch args via OpenConfiguration (macOS may ignore
-        // them). Direct build below delivers them reliably via /usr/bin/open --args.
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.createsNewApplicationInstance = plan.createsNewApplicationInstance
-        configuration.arguments = plan.deliveredApplicationArguments
-        NSWorkspace.shared.open(plan.documentURLs, withApplicationAt: appURL, configuration: configuration) { _, error in
-            if let error = error {
-                AppLogger.error("Launch", "Failed to open URL (sandboxed): \(error)")
+        launcher.launch(plan) { [weak self] failure in
+            guard let self else { return }
+            if let failure {
+                AppLogger.error("Launch", "Failed to open browser \(bundleId): \(failure)")
+                self.lastLaunchError = "Could not open the selected browser. \(failure)"
+                completion?(false)
+                return
             }
+            self.recordSuccessfulOpen(
+                url: url, bundleID: bundleId, profile: profile, sourceApp: sourceApp,
+                viaRule: viaRule, isPrivate: usePrivateMode || privateIntent
+            )
+            completion?(true)
         }
-        #else
-        if plan.usesDirectOpenTool {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = plan.directOpenArguments
-            do {
-                try process.run()
-            } catch {
-                AppLogger.error("Launch", "Failed to launch browser with profile/private arguments: \(error)")
-            }
-        } else {
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.createsNewApplicationInstance = plan.createsNewApplicationInstance
-            NSWorkspace.shared.open(plan.documentURLs, withApplicationAt: appURL, configuration: configuration) { _, error in
-                if let error = error {
-                    AppLogger.error("Launch", "Failed to open URL: \(error)")
-                }
-            }
-        }
-        #endif
+    }
 
-        recordHistory()
-
-        // Record frequency for suggestions (never for private opens)
-        if !(usePrivateMode || privateIntent), let domain = url.host {
-            DomainFrequencyTracker.shared.record(domain: domain.lowercased(), browserBundleID: bundleId)
+    private func recordSuccessfulOpen(
+        url: URL, bundleID: String, profile: String?, sourceApp: String?,
+        viaRule: String?, isPrivate: Bool
+    ) {
+        guard ownsActivityStores else { return }
+        LinkHistory.shared.record(
+            url: url,
+            source: sourceApp,
+            outcome: .browser(bundleID: bundleID, profile: profile, viaRule: viaRule),
+            isPrivate: isPrivate
+        )
+        if !isPrivate, let domain = url.host {
+            DomainFrequencyTracker.shared.record(domain: domain.lowercased(), browserBundleID: bundleID)
         }
     }
 
@@ -3176,20 +3183,17 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             }
         }
 
-        let normalizedPattern = normalizedHostPattern(pattern)
-        guard !normalizedPattern.isEmpty else { return false }
+        return pattern.split(separator: ",", omittingEmptySubsequences: false).contains { candidate in
+            let normalizedPattern = normalizedHostPattern(String(candidate))
+            guard !normalizedPattern.isEmpty else { return false }
 
-        if normalizedPattern == "*" {
-            return true
+            if normalizedPattern == "*" { return true }
+            if normalizedPattern.hasPrefix("*.") {
+                let suffix = String(normalizedPattern.dropFirst(2))
+                return host == suffix || host.hasSuffix(".\(suffix)")
+            }
+            return host == normalizedPattern
         }
-
-        if normalizedPattern.hasPrefix("*.") {
-            let suffix = String(normalizedPattern.dropFirst(2))
-            guard !suffix.isEmpty else { return false }
-            return host == suffix || host.hasSuffix(".\(suffix)")
-        }
-
-        return host == normalizedPattern
     }
 
     static func pathMatches(_ path: String, prefix: String?) -> Bool {

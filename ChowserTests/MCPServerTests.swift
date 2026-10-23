@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Network
 @testable import Chowser
 
 // Run serially — MCPServer is a singleton and binds a real port
@@ -354,6 +355,101 @@ struct MCPServerTests {
     }
 
     // MARK: - Auth Enforcement
+
+    @Test("Malformed query-only request targets are rejected without crashing before auth")
+    func queryOnlyRequestTargetIsRejected() async {
+        await withServer {
+            let connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: testPort)!, using: .tcp)
+            defer { connection.cancel() }
+            var response: Data?
+            connection.start(queue: DispatchQueue(label: "ChowserTests.MCPMalformedTarget"))
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, _, _ in
+                Task { @MainActor in response = data }
+            }
+            connection.send(content: Data("GET ? HTTP/1.1\r\nHost: localhost\r\n\r\n".utf8),
+                            completion: .contentProcessed { _ in })
+            #expect(await waitFor { response != nil })
+            #expect(String(decoding: response ?? Data(), as: UTF8.self).hasPrefix("HTTP/1.1 400"))
+            #expect(MCPServer.shared.isRunning)
+        }
+    }
+
+    @Test("Automated MCP sessions write only to their isolated test directory")
+    func sessionFileIsIsolatedUnderAutomation() async throws {
+        try await withServer {
+            let directory = try #require(AppEnvironment.automatedTestLogsDirectory)
+            let session = directory.appendingPathComponent("mcp-session.json")
+            #expect(FileManager.default.fileExists(atPath: session.path))
+            let directoryAttributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+            #expect((directoryAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+            let attributes = try FileManager.default.attributesOfItem(atPath: session.path)
+            #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        }
+        let directory = try #require(AppEnvironment.automatedTestLogsDirectory)
+        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("mcp-session.json").path))
+    }
+
+    @Test("An oversized unauthenticated request is rejected before authentication")
+    func oversizedRequestRejectedBeforeAuth() async throws {
+        try await withServer {
+            var request = URLRequest(url: URL(string: "http://localhost:\(testPort)/rules")!)
+            request.httpMethod = "POST"
+            request.httpBody = Data(repeating: 0x61, count: 1_100_000)
+
+            let (_, response) = try await URLSession.shared.data(for: request)
+            #expect((response as? HTTPURLResponse)?.statusCode == 413)
+        }
+    }
+
+    @Test("Oversized headers are rejected before authentication")
+    func oversizedHeadersRejectedBeforeAuth() async throws {
+        try await withServer {
+            var request = URLRequest(url: URL(string: "http://localhost:\(testPort)/status")!)
+            request.setValue(String(repeating: "a", count: 20_000), forHTTPHeaderField: "X-Padding")
+            let (_, response) = try await URLSession.shared.data(for: request)
+            #expect((response as? HTTPURLResponse)?.statusCode == 431)
+        }
+    }
+
+    @Test("Idle connections cannot exhaust the local API")
+    func idleConnectionLimit() async throws {
+        try await withServer {
+            let queue = DispatchQueue(label: "ChowserTests.MCPConnections")
+            let held = (0..<16).map { _ in
+                NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: testPort)!, using: .tcp)
+            }
+            defer { held.forEach { $0.cancel() } }
+            for connection in held {
+                connection.start(queue: queue)
+                connection.send(content: Data("GET /status HTTP/1.1\r\nHost: localhost\r\n".utf8), completion: .contentProcessed { _ in })
+            }
+            try await Task.sleep(for: .milliseconds(500))
+            let (status, _) = try await get("/status", token: nil)
+            #expect(status == 503)
+        }
+    }
+
+    @Test("An incomplete request times out")
+    func incompleteRequestTimeout() async {
+        await withServer {
+            let connection = NWConnection(
+                host: "127.0.0.1", port: NWEndpoint.Port(rawValue: testPort)!, using: .tcp
+            )
+            defer { connection.cancel() }
+            var response: Data?
+            connection.start(queue: DispatchQueue(label: "ChowserTests.MCPTimeout"))
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, _, _ in
+                Task { @MainActor in response = data }
+            }
+            connection.send(
+                content: Data("GET /status HTTP/1.1\r\nHost: localhost\r\n".utf8),
+                completion: .contentProcessed { _ in }
+            )
+            let received = await waitFor(timeout: .seconds(7)) { response != nil }
+            #expect(received)
+            #expect(String(decoding: response ?? Data(), as: UTF8.self).hasPrefix("HTTP/1.1 408"))
+        }
+    }
 
     @Test("GET /status without token returns 401")
     func statusNoToken() async throws {

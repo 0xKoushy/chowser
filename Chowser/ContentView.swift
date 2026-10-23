@@ -53,6 +53,7 @@ struct ContentView: View {
     /// going to the app the user clicked into.
     @State private var graceClickMonitor: Any?
     @State private var showingConfigureRule = false
+    @State private var activeLaunchID: UUID?
     @AppStorage("pickerHintOpenCount") private var pickerHintOpenCount = 0
     private static let pickerHintOpens = 5
 
@@ -232,7 +233,21 @@ struct ContentView: View {
     }
 
     var body: some View {
-        pickerPresentation
+        VStack(spacing: 8) {
+            if !isPreview, let error = browserManager.lastLaunchError {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Couldn't open browser")
+                        .font(.system(size: 12, weight: .semibold))
+                        .accessibilityIdentifier("picker.launchError")
+                    Text(error)
+                        .font(.system(size: 11))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            }
+            pickerPresentation
+        }
             .fixedSize(horizontal: false, vertical: true)
             .padding(pickerPresentationPadding)
             .overlay(alignment: .topLeading) {
@@ -248,7 +263,10 @@ struct ContentView: View {
             .onAppear(perform: handleAppear)
             .onDisappear(perform: handleDisappear)
             .onChange(of: browserManager.currentURL) { oldURL, newURL in
-                if oldURL == nil, newURL != nil { presentedAt = ProcessInfo.processInfo.systemUptime }
+                if oldURL != newURL, newURL != nil {
+                    presentedAt = ProcessInfo.processInfo.systemUptime
+                    if !isPreview { installKeyEventMonitor() }
+                }
                 if !isPreview, oldURL == nil, newURL != nil, pickerHintOpenCount <= Self.pickerHintOpens {
                     pickerHintOpenCount += 1
                 }
@@ -1011,6 +1029,12 @@ struct ContentView: View {
         browserManager.configuredBrowsers
     }
 
+    private var quickDirectBrowserCount: Int {
+        browserManager.pickerLayoutMode == .radial
+            ? RadialPickerGeometry.directBrowserCount(totalBrowserCount: sortedBrowsers.count)
+            : min(8, sortedBrowsers.count)
+    }
+
     /// Returns the bundle ID of the browser most frequently used for the current domain,
     /// but only when there is a clear dominant choice (≥5 uses and ≥60% of total clicks).
     private var suggestedBrowserBundleId: String? {
@@ -1586,7 +1610,10 @@ struct ContentView: View {
     /// - Parameter recordDismissal: false when the link was just opened, so it isn't also
     ///   logged as dismissed.
     private func dismissPicker(recordDismissal: Bool = true) {
+        guard !recordDismissal || activeLaunchID == nil else { return }
         removeGraceClickMonitor()
+        activeLaunchID = nil
+        browserManager.lastLaunchError = nil
         // While a short link is still resolving, the routing task records the outcome.
         if recordDismissal, !isPreview, !privateMode, !browserManager.pickerPrivateIntent,
            !browserManager.isResolvingIncomingURL, let url = browserManager.currentURL {
@@ -1600,6 +1627,7 @@ struct ContentView: View {
         for window in NSApp.windows where window.isVisible && window.identifier?.rawValue == "picker" {
             window.orderOut(nil)
         }
+        if !isPreview { AppDelegate.shared?.completeIncomingURL() }
     }
 
     private func resetPickerState() {
@@ -1625,11 +1653,12 @@ struct ContentView: View {
     // MARK: - Browser Action
 
     private func openUrl(with browser: BrowserConfig, usePrivateMode: Bool = false) {
-        guard let url = browserManager.currentURL else { return }
+        guard let url = browserManager.currentURL, activeLaunchID == nil else { return }
+        let launchID = UUID()
+        activeLaunchID = launchID
         let effectiveUsePrivateMode = supportsPrivateLaunchMode && usePrivateMode
         let sourceApp = browserManager.pickerSourceAppBundleId
         let privateIntent = browserManager.pickerPrivateIntent
-        if !isPreview { dismissPicker(recordDismissal: false) }
         browserManager.open(
             url: url,
             withBrowserBundleID: browser.bundleId,
@@ -1637,7 +1666,11 @@ struct ContentView: View {
             usePrivateMode: effectiveUsePrivateMode,
             sourceApp: sourceApp,
             privateIntent: privateIntent
-        )
+        ) { success in
+            guard activeLaunchID == launchID else { return }
+            activeLaunchID = nil
+            if success && !isPreview { dismissPicker(recordDismissal: false) }
+        }
     }
 
     private func requestedPrivateMode(modifierFlags: NSEvent.ModifierFlags) -> Bool {
@@ -1695,8 +1728,8 @@ struct ContentView: View {
         keyboardSelectedBrowserId = browsers.first?.id
         quickMoreSelected = false
         if let overflowID = quickOverflowSelectedBrowserId,
-           !browsers.dropFirst(8).contains(where: { $0.id == overflowID }) {
-            quickOverflowSelectedBrowserId = browsers.dropFirst(8).first?.id
+           !browsers.dropFirst(quickDirectBrowserCount).contains(where: { $0.id == overflowID }) {
+            quickOverflowSelectedBrowserId = browsers.dropFirst(quickDirectBrowserCount).first?.id
         }
     }
 
@@ -1733,6 +1766,12 @@ struct ContentView: View {
 
     private func handlePickerKeyDown(_ event: NSEvent) -> Bool {
         guard isPickerEvent(event) else { return false }
+
+        // The rule form owns typing and native editing shortcuts, just like the URL field.
+        if showingConfigureRule {
+            if event.keyCode == 53 { showingConfigureRule = false; return true }
+            return false
+        }
 
         // Editing the URL field takes priority over every other shortcut (FR-043: browser
         // shortcuts keep working when NOT editing — implicitly, they must NOT fire while
@@ -1918,7 +1957,7 @@ struct ContentView: View {
         guard !browsers.isEmpty else { keyboardSelectedBrowserId = nil; return }
 
         if usesQuickPicker, quickOverflowPresented {
-            let overflow = Array(browsers.dropFirst(8))
+            let overflow = Array(browsers.dropFirst(quickDirectBrowserCount))
             guard !overflow.isEmpty else { quickOverflowPresented = false; return }
             let currentIndex = quickOverflowSelectedBrowserId.flatMap { id in overflow.firstIndex(where: { $0.id == id }) } ?? 0
             quickOverflowSelectedBrowserId = overflow[(currentIndex + delta + overflow.count) % overflow.count].id
@@ -1926,7 +1965,7 @@ struct ContentView: View {
         }
 
         if usesQuickPicker {
-            let direct = Array(browsers.prefix(8))
+            let direct = Array(browsers.prefix(quickDirectBrowserCount))
             let hasMore = browsers.count > direct.count
             let itemCount = direct.count + (hasMore ? 1 : 0)
             guard itemCount > 0 else { return }
@@ -1963,7 +2002,7 @@ struct ContentView: View {
         guard !browsers.isEmpty else { return false }
 
         if usesQuickPicker, quickOverflowPresented {
-            let overflow = Array(browsers.dropFirst(8))
+            let overflow = Array(browsers.dropFirst(quickDirectBrowserCount))
             guard let browser = quickOverflowSelectedBrowserId.flatMap({ id in overflow.first(where: { $0.id == id }) }) ?? overflow.first else {
                 return false
             }
@@ -1972,8 +2011,8 @@ struct ContentView: View {
             return true
         }
 
-        if usesQuickPicker, quickMoreSelected, browsers.count > 8 {
-            quickOverflowSelectedBrowserId = browsers.dropFirst(8).first?.id
+        if usesQuickPicker, quickMoreSelected, browsers.count > quickDirectBrowserCount {
+            quickOverflowSelectedBrowserId = browsers.dropFirst(quickDirectBrowserCount).first?.id
             quickOverflowPresented = true
             return true
         }
