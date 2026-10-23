@@ -127,6 +127,7 @@ extension SettingsView {
                 }
             }
         )
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.backupSection")
     }
 

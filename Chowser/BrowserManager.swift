@@ -2575,6 +2575,7 @@ struct BrowserFallbackPolicy: Codable, Equatable {
             if AppEnvironment.isUITesting {
                 let count = defaults.integer(forKey: AppEnvironment.uiTestOpenInvocationCountKey)
                 defaults.set(count + 1, forKey: AppEnvironment.uiTestOpenInvocationCountKey)
+                AppEnvironment.publishUITestOpenCount(count + 1)
             }
             Task { @MainActor in completion?(true) }
             return

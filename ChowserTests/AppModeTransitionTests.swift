@@ -3,6 +3,23 @@ import Testing
 @testable import Chowser
 
 struct AppModeTransitionTests {
+    @Test("Reapplying the active app mode keeps its entry point without changing activation policy",
+          arguments: [ChowserAppMode.app, .menuBar])
+    @MainActor
+    func reapplyingActiveModeIsIdempotent(_ mode: ChowserAppMode) {
+        var events: [String] = []
+        let result = AppDelegate.performAppModeTransition(
+            to: mode, currentMode: mode,
+            ensureStatusItem: { events.append("status-created"); return true },
+            setActivationPolicy: { _ in events.append("unexpected-policy-change"); return false },
+            removeStatusItem: { events.append("status-removed") },
+            persistMode: { events.append("persist-\($0.rawValue)") }
+        )
+        guard case .success = result else { Issue.record("An already active mode must succeed"); return }
+        #expect(events == (mode == .menuBar
+            ? ["status-created", "persist-menuBar"] : ["status-removed", "persist-app"]))
+    }
+
     @Test("Incoming URL batches wait for the picker and retain each source and intent")
     func incomingURLQueuePreservesOrderAndContext() {
         var queue = IncomingURLQueue()

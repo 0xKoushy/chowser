@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		1FF76C046FBE3D0C66C38124 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4256289010C5E6B965D7B730 /* Foundation.framework */; };
-		25AA97349CB4FAEB8479D3CA /* ChowserUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C59D2406EC8317E26EF49F70 /* ChowserUITests.swift */; };
 		A20000000000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000003 /* Sparkle */; };
 /* End PBXBuildFile section */
 
@@ -43,7 +42,6 @@
 		30E5E9EF2F4847CD00E18455 /* Chowser.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chowser.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4256289010C5E6B965D7B730 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		97B7470017E24968B7459B57 /* ChowserTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ChowserTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		C59D2406EC8317E26EF49F70 /* ChowserUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChowserUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -88,6 +86,11 @@
 		B2664C3112464B0CB7F91A42 /* ChowserTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ChowserTests;
+			sourceTree = "<group>";
+		};
+		3319B9B7684339E4554F64B9 /* ChowserUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ChowserUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -154,14 +157,6 @@
 				3032E9DD2F58AB500027E23B /* ChowserScreenshotTests.xctest */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		3319B9B7684339E4554F64B9 /* ChowserUITests */ = {
-			isa = PBXGroup;
-			children = (
-				C59D2406EC8317E26EF49F70 /* ChowserUITests.swift */,
-			);
-			path = ChowserUITests;
 			sourceTree = "<group>";
 		};
 		AC5C1A2A235C60E8E1E5D638 /* Frameworks */ = {
@@ -282,6 +277,9 @@
 			dependencies = (
 				D4B7A1022F59100100ABCDEF /* PBXTargetDependency */,
 			);
+			fileSystemSynchronizedGroups = (
+				3319B9B7684339E4554F64B9 /* ChowserUITests */,
+			);
 			name = ChowserUITests;
 			productName = ChowserUITests;
 			productReference = 0835040E4AFBA041A2260392 /* ChowserUITests.xctest */;
@@ -399,7 +397,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				25AA97349CB4FAEB8479D3CA /* ChowserUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

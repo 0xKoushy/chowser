@@ -1,140 +1,7 @@
 import XCTest
 import AppKit
 
-final class ChowserUITests: XCTestCase {
-    private var app: XCUIApplication!
-    private var logsDirectory: URL!
-    private var defaultsSuiteName: String!
-    private let chowserBundleIdentifier = "in.sreerams.Chowser"
-
-    override func setUpWithError() throws {
-        continueAfterFailure = false
-
-        terminateRunningChowserApps()
-
-        logsDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chowser-ui-tests-\(UUID().uuidString)", isDirectory: true)
-        launchTestApp(arguments: [
-            "-UITesting",
-            "-UITesting_ClearData",
-            "-UITesting_MockInstalledBrowsers",
-            "-UITesting_DisableExternalOpen",
-            "-UITesting_DefaultURL",
-            "-UITesting_OpenSettings",
-        ])
-    }
-
-    override func tearDownWithError() throws {
-        if let app, app.state != .notRunning {
-            app.terminate()
-        }
-
-        terminateRunningChowserApps(timeout: 2)
-        if let logsDirectory {
-            try? FileManager.default.removeItem(at: logsDirectory)
-        }
-        if let defaultsSuiteName {
-            UserDefaults(suiteName: defaultsSuiteName)?.removePersistentDomain(forName: defaultsSuiteName)
-        }
-        logsDirectory = nil
-        defaultsSuiteName = nil
-        app = nil
-    }
-
-    private func terminateRunningChowserApps(timeout: TimeInterval = 6) {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        while true {
-            let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: chowserBundleIdentifier)
-            guard !runningApps.isEmpty else { return }
-
-            for runningApp in runningApps {
-                if !runningApp.terminate() {
-                    runningApp.forceTerminate()
-                }
-            }
-
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
-
-            if Date() >= deadline {
-                for runningApp in runningApps where !runningApp.isTerminated {
-                    runningApp.forceTerminate()
-                }
-                return
-            }
-        }
-    }
-
-    private func launchTestApp(
-        arguments: [String],
-        suiteLabel: String = "default",
-        mouseLocation: CGPoint? = nil
-    ) {
-        if let app, app.state != .notRunning {
-            app.terminate()
-        }
-        terminateRunningChowserApps()
-        if let defaultsSuiteName {
-            UserDefaults(suiteName: defaultsSuiteName)?.removePersistentDomain(forName: defaultsSuiteName)
-        }
-
-        defaultsSuiteName = "in.sreerams.Chowser.UITests.\(suiteLabel).\(UUID().uuidString)"
-        app = XCUIApplication()
-        app.launchEnvironment["CHOWSER_LOGS_DIRECTORY"] = logsDirectory.path
-        app.launchEnvironment["CHOWSER_DEFAULTS_SUITE"] = defaultsSuiteName
-        app.launchArguments = arguments
-        if let mouseLocation {
-            CGWarpMouseCursorPosition(mouseLocation)
-        }
-        app.launch()
-    }
-
-    private func launchClassicPickerFixture(suiteLabel: String) {
-        launchTestApp(arguments: [
-            "-UITesting",
-            "-UITesting_ClearData",
-            "-UITesting_IconsPickerFixture",
-            "-UITesting_DisableExternalOpen",
-            "-UITesting_DefaultURL",
-            "-UITesting_OpenPicker",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ], suiteLabel: suiteLabel)
-    }
-
-    /// The app counts launches in its UI-test defaults suite. The UI-test runner is sandboxed,
-    /// so `UserDefaults(suiteName:)` there resolves to the runner's container and never sees
-    /// the unsandboxed app's writes. The runner does have read-only file access, so read the
-    /// app's suite plist directly from the real home directory.
-    private func observedOpenInvocationCount() -> Int {
-        observedCount(for: "uiTestOpenInvocationCount")
-    }
-
-    private func observedCount(for key: String) -> Int {
-        guard let defaultsSuiteName, let passwd = getpwuid(getuid()) else { return 0 }
-        let home = String(cString: passwd.pointee.pw_dir)
-        let plist = URL(fileURLWithPath: home)
-            .appendingPathComponent("Library/Preferences/\(defaultsSuiteName).plist")
-        guard let data = try? Data(contentsOf: plist),
-              let object = try? PropertyListSerialization.propertyList(from: data, format: nil),
-              let values = object as? [String: Any] else { return 0 }
-        return (values[key] as? Int) ?? 0
-    }
-
-    /// Waits for exactly `expectedCount` launches, then lets a late duplicate launch surface
-    /// before confirming the count did not move.
-    private func waitForOpenInvocationCount(_ expectedCount: Int, timeout: TimeInterval = 5) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if observedOpenInvocationCount() == expectedCount {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-                return observedOpenInvocationCount() == expectedCount
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-        } while Date() < deadline
-        return false
-    }
-
+final class ChowserUITests: ChowserUITestCase {
     func testIncomingURLBatchOpensDistinctLinksInOrder() throws {
         launchTestApp(arguments: [
             "-UITesting",
@@ -163,25 +30,6 @@ final class ChowserUITests: XCTestCase {
             "https://first-batch.example/",
             "https://second-batch.example/",
         ])
-    }
-
-    private func performSystemDrag(from start: CGPoint, to end: CGPoint) {
-        let source = CGEventSource(stateID: .hidSystemState)
-        CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: start, mouseButton: .left)?
-            .post(tap: .cghidEventTap)
-        for step in 1...12 {
-            let progress = CGFloat(step) / 12
-            let point = CGPoint(
-                x: start.x + (end.x - start.x) * progress,
-                y: start.y + (end.y - start.y) * progress
-            )
-            CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)?
-                .post(tap: .cghidEventTap)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
-        CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left)?
-            .post(tap: .cghidEventTap)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     }
 
     func testAppearancePreviewStaysVisibleWhileEditingLowerSettings() throws {
@@ -499,7 +347,7 @@ final class ChowserUITests: XCTestCase {
                 "-UITesting_OpenPicker",
                 "-ApplePersistenceIgnoreState",
                 "YES",
-            ], suiteLabel: label)
+            ], suiteLabel: label, mouseLocation: CGPoint(x: 360, y: 380))
 
             let picker = app.descendants(matching: .any).matching(identifier: rootIdentifier).firstMatch
             let safariButton = app.buttons["Open in Safari"]
@@ -508,11 +356,10 @@ final class ChowserUITests: XCTestCase {
             XCTAssertTrue(safariButton.waitForExistence(timeout: 2))
             XCTAssertTrue(chromeButton.waitForExistence(timeout: 2))
 
-            let start = rootIdentifier == "picker.radial"
-                ? CGPoint(x: picker.frame.midX, y: picker.frame.midY)
-                : CGPoint(x: safariButton.frame.midX, y: safariButton.frame.midY)
-            let end = CGPoint(x: chromeButton.frame.midX, y: chromeButton.frame.midY)
-            performSystemDrag(from: start, to: end)
+            let start = (rootIdentifier == "picker.radial" ? picker : safariButton)
+                .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let end = chromeButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.click(forDuration: 0.1, thenDragTo: end)
 
             XCTAssertTrue(waitForOpenInvocationCount(1), "Drag activation should launch exactly once in \(label).")
             XCTAssertFalse(picker.exists, "Drag activation should dismiss \(label).")
@@ -738,17 +585,14 @@ final class ChowserUITests: XCTestCase {
 
         ui.openSettings()
         ui.assertSettingsVisible()
-        ui.openAddBrowserSheet()
-
-        // Count browsers before adding
         let beforeCount = ui.browserRows.count
-
-        // Add the first available browser option
+        ui.openAddBrowserSheet()
         ui.addFirstBrowserOption()
-
-        // Browser list should grow by 1
-        let afterCount = ui.browserRows.count
-        XCTAssertEqual(afterCount, beforeCount + 1, "Adding a browser should increase the browser list count.")
+        let added = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == %d", beforeCount + 1), object: ui.browserRows
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [added], timeout: 5), .completed,
+                       "Adding one browser should increase the list by exactly one.")
     }
 
     func testRulesMenuButtonExists() throws {
@@ -855,221 +699,5 @@ final class ChowserUITests: XCTestCase {
         ui.assertRuleCreated()
     }
 
-    private func triggerOpenURLInChowser(_ urlString: String, file: StaticString = #filePath, line: UInt = #line) {
-        guard let appURL = NSRunningApplication.runningApplications(withBundleIdentifier: chowserBundleIdentifier).first?.bundleURL else {
-            XCTFail("Could not locate running Chowser app to open URL.", file: file, line: line)
-            return
-        }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-a", appURL.path, urlString]
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            XCTFail("Failed to invoke open command for URL test: \(error.localizedDescription)", file: file, line: line)
-            return
-        }
-
-        XCTAssertEqual(process.terminationStatus, 0, "open command should succeed when sending URL to Chowser.", file: file, line: line)
-    }
-}
-
-private struct ChowserAppDriver {
-    let app: XCUIApplication
-
-    var pickerSettingsButton: XCUIElement { app.buttons["picker.openSettingsButton"] }
-    var pickerRoot: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "picker.urlDisplay").firstMatch
-    }
-    var settingsAddBrowserButton: XCUIElement { app.buttons["settings.addBrowserButton"] }
-
-    /// One name label per row of the browsers list (in picker order).
-    var browserRows: XCUIElementQuery {
-        app.staticTexts.matching(identifier: "settings.browser.name")
-    }
-
-    /// The table footer's "-" button; removes the selected browser.
-    var browserRemoveButton: XCUIElement {
-        app.buttons["settings.browser.removeButton"]
-    }
-
-    var addSheetRoot: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "settings.addSheet.root").firstMatch
-    }
-
-    var lastOpenedBrowserText: XCUIElement {
-        app.staticTexts["picker.lastOpenedBrowser"]
-    }
-
-    var addSheetConfirmButton: XCUIElement {
-        app.buttons["settings.addSheet.addButton"]
-    }
-
-    var firstPickerBrowserRow: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "picker.browserRow").firstMatch
-    }
-
-    var sendToIPhoneButton: XCUIElement { app.buttons["picker.sendToIPhoneButton"] }
-    var iphoneAirDropButton: XCUIElement { app.buttons["iphoneAction.airDropButton"] }
-    var iphoneShowQRCodeButton: XCUIElement { app.buttons["iphoneAction.showQRCodeButton"] }
-    var iphoneCopyURLButton: XCUIElement { app.buttons["iphoneAction.copyURLButton"] }
-    var iphoneHandoffStatusText: XCUIElement { app.staticTexts["iphoneAction.handoffStatusText"] }
-    var iphoneQRCloseButton: XCUIElement { app.buttons["iphoneQR.closeButton"] }
-
-    var iphoneQRSheet: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "iphoneQR.sheet").firstMatch
-    }
-
-    var iphoneQRImage: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "iphoneQR.image").firstMatch
-    }
-
-    var iphoneQRURLText: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "iphoneQR.urlText").firstMatch
-    }
-
-    var addRuleButton: XCUIElement {
-        app.buttons["settings.addRuleButton"]
-    }
-
-    var ruleInspectorHostField: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "settings.rule.hostField").firstMatch
-    }
-
-    var rulesTable: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "settings.rules.table").firstMatch
-    }
-
-    var firstBrowserNameValue: String {
-        guard browserRows.count > 0 else { return "" }
-        let label = browserRows.element(boundBy: 0)
-        if let value = label.value as? String, !value.isEmpty { return value }
-        return label.label
-    }
-
-    func assertPickerVisible(file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(pickerRoot.waitForExistence(timeout: 5), "Picker UI should be visible.", file: file, line: line)
-    }
-
-    func assertBrowserSelectionRecorded(file: StaticString = #filePath, line: UInt = #line) {
-        let predicate = NSPredicate(format: "value != 'none'")
-        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: lastOpenedBrowserText)
-        let result = XCTWaiter.wait(for: [expectation], timeout: 5)
-        XCTAssertEqual(result, .completed, "Picker should record selected browser in UI-test mode.", file: file, line: line)
-    }
-
-    func assertSettingsVisible(file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(settingsAddBrowserButton.waitForExistence(timeout: 5), "Settings UI should remain visible.", file: file, line: line)
-    }
-
-    func openSettings() {
-        if settingsAddBrowserButton.waitForExistence(timeout: 5) {
-            return
-        }
-
-        if pickerSettingsButton.waitForExistence(timeout: 5) {
-            pickerSettingsButton.click()
-            XCTAssertTrue(settingsAddBrowserButton.waitForExistence(timeout: 5), "Settings did not open after tapping picker gear button.")
-            return
-        }
-
-        app.typeKey(",", modifierFlags: .command)
-        XCTAssertTrue(settingsAddBrowserButton.waitForExistence(timeout: 5), "Settings UI did not appear.")
-    }
-
-    func openBrowsersSection() {
-        clickSidebarItem(identifier: "settings.sidebar.browsers")
-    }
-
-    func openGeneralSection() {
-        clickSidebarItem(identifier: "settings.sidebar.general")
-    }
-
-    func openRulesSection() {
-        clickSidebarItem(identifier: "settings.sidebar.rules")
-    }
-
-    func openBackupSection() {
-        clickSidebarItem(identifier: "settings.sidebar.backup")
-    }
-
-    func openAddBrowserSheet() {
-        let addButton = app.buttons["settings.addBrowserButton"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add browser button not found.")
-        addButton.click()
-
-        XCTAssertTrue(addSheetRoot.waitForExistence(timeout: 5), "Add browser sheet should open.")
-    }
-
-    func addFirstBrowserOption() {
-        // Already-added browsers are listed too (checked + disabled); pick the first addable one.
-        let options = app.descendants(matching: .any).matching(identifier: "settings.addSheet.option")
-        XCTAssertTrue(options.firstMatch.waitForExistence(timeout: 5), "No browser option found.")
-        let firstOption = options.matching(NSPredicate(format: "isEnabled == true")).firstMatch
-        XCTAssertTrue(firstOption.exists, "No addable browser option found.")
-        firstOption.click()
-
-        XCTAssertTrue(addSheetConfirmButton.waitForExistence(timeout: 5), "Add Browsers button not found.")
-        addSheetConfirmButton.click()
-
-        let predicate = NSPredicate(format: "exists == false")
-        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: addSheetRoot)
-        _ = XCTWaiter.wait(for: [expectation], timeout: 5)
-    }
-
-    func resetToFreshSetup() {
-        let resetButton = app.buttons["settings.resetButton"]
-        XCTAssertTrue(resetButton.waitForExistence(timeout: 5), "Reset button not found in Backup & Advanced section.")
-        resetButton.click()
-
-        let confirmButton = app.buttons["action-button-1"]
-        XCTAssertTrue(confirmButton.waitForExistence(timeout: 5), "Reset confirmation not shown.")
-        confirmButton.click()
-    }
-
-    /// Adds a rule inline: the "+" button inserts a row and focuses the inspector's
-    /// "Link matches" field (there is no add-rule sheet anymore).
-    func openAddRuleSheet() {
-        XCTAssertTrue(addRuleButton.waitForExistence(timeout: 5), "Add rule button not found.")
-        addRuleButton.click()
-        XCTAssertTrue(ruleInspectorHostField.waitForExistence(timeout: 5), "Rule inspector should open for the new rule.")
-    }
-
-    func addRule(hostPattern: String) {
-        let hostField = ruleInspectorHostField
-        XCTAssertTrue(hostField.waitForExistence(timeout: 5), "Link matches field not found.")
-        hostField.click()
-        hostField.typeText(hostPattern)
-        // Rules save as soon as they validate; Return ends editing.
-        app.typeKey(.return, modifierFlags: [])
-    }
-
-    func assertRuleCreated(file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(rulesTable.waitForExistence(timeout: 5), "Rules table should exist.", file: file, line: line)
-        let error = app.descendants(matching: .any).matching(identifier: "settings.rule.hostError").firstMatch
-        XCTAssertFalse(error.exists, "The new rule should be valid.", file: file, line: line)
-        // SwiftUI's Table surfaces as an accessibility Outline whose rows are OutlineRows.
-        let predicate = NSPredicate(format: "count > 0")
-        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: rulesTable.outlineRows)
-        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, "Expected at least one routing rule row.", file: file, line: line)
-    }
-
-    func clickSidebarItem(identifier: String) {
-        let candidates: [XCUIElement] = [
-            app.buttons[identifier],
-            app.staticTexts[identifier],
-            app.cells[identifier],
-            app.otherElements[identifier],
-        ]
-
-        for candidate in candidates where candidate.waitForExistence(timeout: 1) {
-            candidate.click()
-            return
-        }
-
-        XCTFail("Sidebar item \(identifier) not found.")
-    }
 }

@@ -123,6 +123,18 @@ enum AppEnvironment {
         return nil
     }
 
+    static func publishUITestOpenCount(_ count: Int) {
+        guard isUITesting, let directory = automatedTestLogsDirectory else { return }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try String(count).write(
+                to: directory.appendingPathComponent("open-count.txt"), atomically: true, encoding: .utf8
+            )
+        } catch {
+            AppLogger.error("UITesting", "Could not publish the launch observation: \(error.localizedDescription)")
+        }
+    }
+
     /// Redirects Link History away from the real Application Support file during UI and
     /// unit tests. Nil in a normal launch (LinkHistory then uses its default location).
     nonisolated static var linkHistoryFileURLOverride: URL? {

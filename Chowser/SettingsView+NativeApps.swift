@@ -69,6 +69,7 @@ private struct NativeAppsSettingsPage: View {
                 }
             }
         )
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.nativeAppsSection")
     }
 
@@ -124,6 +125,7 @@ private struct NativeAppsSettingsPage: View {
         }
         .padding(16)
         .frame(width: 340)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings.nativeApps.directoryInfo")
     }
 

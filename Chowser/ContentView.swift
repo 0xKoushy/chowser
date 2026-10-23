@@ -1029,6 +1029,12 @@ struct ContentView: View {
         browserManager.configuredBrowsers
     }
 
+    private var quickDirectBrowserCount: Int {
+        browserManager.pickerLayoutMode == .radial
+            ? RadialPickerGeometry.directBrowserCount(totalBrowserCount: sortedBrowsers.count)
+            : min(8, sortedBrowsers.count)
+    }
+
     /// Returns the bundle ID of the browser most frequently used for the current domain,
     /// but only when there is a clear dominant choice (≥5 uses and ≥60% of total clicks).
     private var suggestedBrowserBundleId: String? {
@@ -1722,8 +1728,8 @@ struct ContentView: View {
         keyboardSelectedBrowserId = browsers.first?.id
         quickMoreSelected = false
         if let overflowID = quickOverflowSelectedBrowserId,
-           !browsers.dropFirst(8).contains(where: { $0.id == overflowID }) {
-            quickOverflowSelectedBrowserId = browsers.dropFirst(8).first?.id
+           !browsers.dropFirst(quickDirectBrowserCount).contains(where: { $0.id == overflowID }) {
+            quickOverflowSelectedBrowserId = browsers.dropFirst(quickDirectBrowserCount).first?.id
         }
     }
 
@@ -1760,6 +1766,12 @@ struct ContentView: View {
 
     private func handlePickerKeyDown(_ event: NSEvent) -> Bool {
         guard isPickerEvent(event) else { return false }
+
+        // The rule form owns typing and native editing shortcuts, just like the URL field.
+        if showingConfigureRule {
+            if event.keyCode == 53 { showingConfigureRule = false; return true }
+            return false
+        }
 
         // Editing the URL field takes priority over every other shortcut (FR-043: browser
         // shortcuts keep working when NOT editing — implicitly, they must NOT fire while
@@ -1945,7 +1957,7 @@ struct ContentView: View {
         guard !browsers.isEmpty else { keyboardSelectedBrowserId = nil; return }
 
         if usesQuickPicker, quickOverflowPresented {
-            let overflow = Array(browsers.dropFirst(8))
+            let overflow = Array(browsers.dropFirst(quickDirectBrowserCount))
             guard !overflow.isEmpty else { quickOverflowPresented = false; return }
             let currentIndex = quickOverflowSelectedBrowserId.flatMap { id in overflow.firstIndex(where: { $0.id == id }) } ?? 0
             quickOverflowSelectedBrowserId = overflow[(currentIndex + delta + overflow.count) % overflow.count].id
@@ -1953,7 +1965,7 @@ struct ContentView: View {
         }
 
         if usesQuickPicker {
-            let direct = Array(browsers.prefix(8))
+            let direct = Array(browsers.prefix(quickDirectBrowserCount))
             let hasMore = browsers.count > direct.count
             let itemCount = direct.count + (hasMore ? 1 : 0)
             guard itemCount > 0 else { return }
@@ -1990,7 +2002,7 @@ struct ContentView: View {
         guard !browsers.isEmpty else { return false }
 
         if usesQuickPicker, quickOverflowPresented {
-            let overflow = Array(browsers.dropFirst(8))
+            let overflow = Array(browsers.dropFirst(quickDirectBrowserCount))
             guard let browser = quickOverflowSelectedBrowserId.flatMap({ id in overflow.first(where: { $0.id == id }) }) ?? overflow.first else {
                 return false
             }
@@ -1999,8 +2011,8 @@ struct ContentView: View {
             return true
         }
 
-        if usesQuickPicker, quickMoreSelected, browsers.count > 8 {
-            quickOverflowSelectedBrowserId = browsers.dropFirst(8).first?.id
+        if usesQuickPicker, quickMoreSelected, browsers.count > quickDirectBrowserCount {
+            quickOverflowSelectedBrowserId = browsers.dropFirst(quickDirectBrowserCount).first?.id
             quickOverflowPresented = true
             return true
         }

@@ -60,25 +60,36 @@ final class MCPServer {
     /// token without any UI interaction. Local file, not networked; same trust level
     /// as the server itself (localhost-only).
     private static var sessionFileURL: URL {
+        if let directory = AppEnvironment.automatedTestLogsDirectory {
+            return directory.appendingPathComponent("mcp-session.json")
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        // Isolated under UI testing so a test run never clobbers a real running
-        // instance's session file (both would otherwise share one path).
         let subpath = AppEnvironment.isUITesting ? "Chowser-UITests/mcp-session.json" : "Chowser/mcp-session.json"
         return base.appendingPathComponent(subpath, isDirectory: false)
     }
 
     private func writeSessionFile() {
         let payload: [String: Any] = ["port": port, "authToken": authToken, "authHeader": "Authorization: Bearer \(authToken)"]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) else { return }
         let url = Self.sessionFileURL
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
+            let directory = url.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            // Protect a pre-existing directory before atomically publishing the token.
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try data.write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            AppLogger.error("MCP", "Could not publish the local session file: \(error.localizedDescription)")
+        }
     }
 
     private func removeSessionFile() {
-        try? FileManager.default.removeItem(at: Self.sessionFileURL)
+        do { try FileManager.default.removeItem(at: Self.sessionFileURL) }
+        catch let error as CocoaError where error.code == .fileNoSuchFile { /* Already stopped. */ }
+        catch { AppLogger.error("MCP", "Could not remove the local session file: \(error.localizedDescription)") }
     }
 
     func start(port: UInt16 = 24245) {
@@ -322,6 +333,9 @@ final class MCPServer {
 
         let method = String(parts[0])
         let rawPath = String(parts[1])
+        guard rawPath.hasPrefix("/") else {
+            return httpResponse(status: 400, body: ["error": "Invalid request target"])
+        }
 
         // Parse path and query string
         let pathComponents = rawPath.split(separator: "?", maxSplits: 1)

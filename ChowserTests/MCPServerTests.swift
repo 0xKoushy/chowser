@@ -356,6 +356,39 @@ struct MCPServerTests {
 
     // MARK: - Auth Enforcement
 
+    @Test("Malformed query-only request targets are rejected without crashing before auth")
+    func queryOnlyRequestTargetIsRejected() async {
+        await withServer {
+            let connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: testPort)!, using: .tcp)
+            defer { connection.cancel() }
+            var response: Data?
+            connection.start(queue: DispatchQueue(label: "ChowserTests.MCPMalformedTarget"))
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, _, _ in
+                Task { @MainActor in response = data }
+            }
+            connection.send(content: Data("GET ? HTTP/1.1\r\nHost: localhost\r\n\r\n".utf8),
+                            completion: .contentProcessed { _ in })
+            #expect(await waitFor { response != nil })
+            #expect(String(decoding: response ?? Data(), as: UTF8.self).hasPrefix("HTTP/1.1 400"))
+            #expect(MCPServer.shared.isRunning)
+        }
+    }
+
+    @Test("Automated MCP sessions write only to their isolated test directory")
+    func sessionFileIsIsolatedUnderAutomation() async throws {
+        try await withServer {
+            let directory = try #require(AppEnvironment.automatedTestLogsDirectory)
+            let session = directory.appendingPathComponent("mcp-session.json")
+            #expect(FileManager.default.fileExists(atPath: session.path))
+            let directoryAttributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+            #expect((directoryAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+            let attributes = try FileManager.default.attributesOfItem(atPath: session.path)
+            #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        }
+        let directory = try #require(AppEnvironment.automatedTestLogsDirectory)
+        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("mcp-session.json").path))
+    }
+
     @Test("An oversized unauthenticated request is rejected before authentication")
     func oversizedRequestRejectedBeforeAuth() async throws {
         try await withServer {

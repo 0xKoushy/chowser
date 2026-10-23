@@ -93,6 +93,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        UITestFixtures.prepareStartup()
+        #endif
         AppLogger.beginSession(presentationMode: BrowserManager.shared.appMode.rawValue)
 
         if AppEnvironment.shouldBypassOnboardingForRequestedUITestSurface {
@@ -699,7 +702,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 }
                 return .failure(.statusItemUnavailable)
             }
-            guard setActivationPolicy(.accessory) else {
+            guard currentMode == .menuBar || setActivationPolicy(.accessory) else {
                 guard setActivationPolicy(.regular) else {
                     // Keep the new status item as a recovery entry point.
                     persistMode(.menuBar)
@@ -712,7 +715,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             persistMode(.menuBar)
 
         case .app:
-            guard setActivationPolicy(.regular) else {
+            guard currentMode == .app || setActivationPolicy(.regular) else {
                 return .failure(.activationPolicyRejected(.app))
             }
             removeStatusItem()
@@ -1121,7 +1124,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // Create a fresh, AppKit-managed window hosting the SwiftUI SettingsView.
         // This is the same pattern as the picker panel and avoids SwiftUI scene
         // lifecycle problems (auto-opening on activation, sendAction responder issues).
-        let hostingController = NSHostingController(rootView: SettingsView())
+        #if DEBUG
+        let settingsView = UITestFixtures.settingsView()
+        #else
+        let settingsView = SettingsView()
+        #endif
+        let hostingController = NSHostingController(rootView: settingsView)
         // The window owns its size (980×660, user-resizable). Letting SwiftUI drive it
         // from the content's ideal/min size made pages with lists overflow the window.
         hostingController.sizingOptions = []
@@ -1140,6 +1148,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let controller = NSWindowController(window: window)
         settingsWindowController = controller
         controller.showWindow(nil)
+        if AppEnvironment.isUITesting, let screen = NSScreen.screens.first {
+            // XCTest cannot reliably hit negative AX coordinates on taller secondary displays.
+            let visible = screen.visibleFrame
+            window.setFrameOrigin(NSPoint(x: visible.midX - window.frame.width / 2,
+                                          y: visible.midY - window.frame.height / 2))
+        }
         AppLogger.recordCriticalLifecycleBreadcrumb(.settingsWindowPresented(created: true))
     }
 
